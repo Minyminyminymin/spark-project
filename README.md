@@ -1,76 +1,110 @@
-# Spark WebXR Research Template
+# Spark Research Template (Desktop)
 
-Research prototype foundation: Gaussian splat rendering (Spark 2.x) + Three.js + WebXR, built as a modular template for avatar, world-space UI, multiplayer, and embodied-AI-agent experiments.
+Walkable 3D-scan environments in the browser: a **scan visual layer**
+(gaussian splats via [Spark](https://sparkjs.dev) or point clouds via
+three.js) over an **invisible collision mesh** (Unity-style Mesh Collider),
+with a third/first-person character, a control panel, and a top-view
+minimap. Built as the foundation for embodied-AI-agent experiments.
+
+Desktop-only: WebXR support was removed 2026-07-16 (the player-rig
+structure still supports re-adding it later).
 
 ## Run
 
 ```bash
 npm install
-npm run dev
+npm run dev   # http://localhost:5173
 ```
 
-Open http://localhost:5173 — click the canvas for mouse look, **WASD** to move, **Q/E** down/up, **Shift** to sprint, **Esc** to release the mouse. **M** toggles the GLB mesh, **N** toggles the splat (for quality comparison).
+Large scan assets are not committed — see `public/splats/README.md`.
+The app runs without them (visual layer reports "failed", everything
+else works).
+
+### Controls
+
+Click canvas = mouse look (Esc releases) · **WASD** move · **Shift** sprint ·
+**Q/E** fly down/up (1인칭) · **V** toggle first/third person ·
+**M** show collider mesh · **N** toggle scan visual ·
+**P** log spawn-point snippet · **Enter** chat
 
 ## Architecture
 
 ```
 src/
-  main.js    Entry — config + module wiring + render loop
-  scene.js   Renderer, scene, camera, SparkRenderer, lights, resize
-  splat.js   Gaussian splat loading (Spark SplatMesh)
-  player.js  Player rig: WASD + pointer-lock mouse look
-  xr.js      WebXR button + session handling (desktop pose save/restore)
-  ui.js      HTML overlay HUD (status + controls help)
-  models.js  GLB/GLTF mesh loading (coexists with splats in the same scene)
-  avatar.js  GLB avatar loader — written, not wired in yet (step 7)
+  main.js       Entry — CONFIG (the "Inspector") + module wiring + render loop
+  scene.js      Renderer, scene, camera, SparkRenderer, lights
+  splat.js      Gaussian splat loading (Spark SplatMesh)
+  models.js     GLB mesh loading + PLY point-cloud loading (loadPointCloud)
+  collision.js  BVH raycast collider (three-mesh-bvh) + primitive fallback
+  player.js     First-person fly cam + third-person character controller
+  avatar.js     GLB character + animation crossfades (Idle/Walk/Run)
+  ui.js         HUD, control panel (sliders), chat tab
+  minimap.js    Top-view canvas map with walked-path trail
 
-Later: network.js (multiplayer), agent.js (embodied AI agent)
+Next: agent.js — AI agent receiving chat commands (hook: ui.onSubmit in main.js)
 ```
 
-Design rule: modules don't import each other's state — `main.js` creates everything and passes dependencies explicitly. Each module returns a small object (`{ update, dispose, ... }`).
+`main.js` creates everything and passes dependencies explicitly; modules
+never import each other's state. `window.__research` exposes live handles
+(scene, camera, player, avatar…) in the browser console.
 
-### The player rig pattern
+## The two-layer environment
 
-The camera is a child of `player.rig` (a `THREE.Group`):
+Every scanned scene is a pair of files under `EnvironmentRoot`:
 
-- **Desktop:** mouse look rotates the camera; WASD translates the rig.
-- **XR:** the headset drives the camera *relative to the rig*, so thumbstick locomotion / teleport / networking later only needs to move the rig — no camera fighting.
+| Layer    | File                | Role                                        |
+| -------- | ------------------- | ------------------------------------------- |
+| visual   | `.ply` / `.spz`     | what you see (splats or colored points)     |
+| collider | `.glb` (triangles!) | invisible physics: floor, walls, camera clip |
 
-## Key facts about Spark (worth remembering)
+The visual loader **auto-detects** the file kind by reading the PLY
+header: real gaussian PLYs (opacity/scale_0/rot_0 properties) go through
+Spark; plain point clouds (e.g. Polycam exports) go through three.js
+Points. Double-precision coordinates are converted to float32 (WebGL
+can't upload float64 — this silently kills the render loop otherwise).
 
-- Spark is a **renderer only**. It loads existing splat files (`.ply`, `.spz`, `.splat`, `.ksplat`, `.sog`, `.zip`, `.rad`). It cannot convert OBJ/GLB into splats — those load as normal Three.js meshes and coexist in the same scene.
-- **Not every .ply is a splat file.** A PLY containing `element face` data (check with `head public/splats/file.ply`) is a triangle mesh, not a 3DGS capture — Spark can't render it. `castle_of_loarre.ply` in this repo is such a mesh-PLY; the project currently uses the official Spark sample splat (butterfly.spz, loaded from sparkjs.dev) until a real capture is added. Real 3DGS PLYs have no faces and carry per-splat opacity/scale/rotation/SH properties.
-- A `SparkRenderer` instance must be added to the scene (done in `scene.js`).
-- `antialias: false` on the WebGLRenderer is required for performance (MSAA doesn't help splats).
-- `lod: true` on `SplatMesh` builds an LOD tree in a background worker. Spark auto-scales the splat budget per platform: ~500–750K in WebXR, ~1–1.5M mobile, ~2.5M desktop. Tune with `lodSplatScale` on `SparkRenderer`.
-- In WebXR, Spark automatically defers splat updates (`preUpdate: false`) to minimize latency.
-- Requires `three >= 0.180` (installed: three 0.185, spark 2.1).
-- Most 3DGS captures are y-down — `splat.js` flips 180° about X by default (`flipped: true`).
+To swap in a new scene, change two urls in `CONFIG.environment` and
+align with the 정렬 sliders (all rotations are in **degrees** — radians
+are banned from the config after a painful 233°-tilt incident).
 
-## Quest testing (step 6)
+## Collision (Unity Mesh Collider style)
 
-WebXR needs a **secure context** (https or localhost). Options:
+`collision.js` builds a BVH over the collider GLB (`three-mesh-bvh`) and
+provides per-frame queries: ground clamp (walk on scanned floors, step
+limit 0.5 m), chest-ray wall blocking, and camera-boom clipping.
+Collider materials are forced double-sided (scan meshes and hole-filled
+patches have inconsistent winding). If the GLB has no triangles (point
+cloud exported as GLB), Unity-style primitive colliders from
+`CONFIG.environment.colliders` are used instead — press **M** to see
+the collider like a Unity gizmo.
 
-1. **adb reverse** (simplest, treats the Quest as localhost):
-   ```bash
-   npm run dev
-   adb reverse tcp:5173 tcp:5173
-   ```
-   Then open `http://localhost:5173` in the Quest browser.
-2. **LAN + HTTPS:** `npm run dev -- --host` plus an HTTPS cert (e.g. `vite-plugin-mkcert`), then open `https://<your-ip>:5173` on the Quest.
+Scan meshes with holes can be repaired headlessly (VTK
+`vtkFillHolesFilter`, same family as MeshLab's Close Holes) — see the
+dev log for the recipe used on `MGstudio_Area1`.
 
-## Development plan
+## Field notes / known quirks
 
-- [x] **1.** Spark renderer + Gaussian splat on desktop
-- [x] **2.** Mouse look
-- [x] **3.** WASD
-- [x] **4.** Load GLB (as normal Three.js mesh — `models.js`, toggle with M/N)
-- [x] **5.** WebXR button
-- [ ] **6.** Quest testing
-- [ ] **7.** Avatar movement
-- [ ] **8.** World-space UI (HTML HUD is invisible in XR)
-- [ ] **9.** Networking / AI agents
+- **Not every .ply/.spz is a gaussian splat.** Files with positions but
+  empty opacity render as nothing (fully transparent). Mesh-PLYs (with
+  `element face`) and point-cloud exports aren't splats either. The
+  loader detects and falls back automatically.
+- **Spark 2.1 static-camera quirk:** a splat that finishes loading while
+  the sort worker is busy stays invisible until the view changes. The
+  render loop applies an imperceptible "splat kick" for the first ~900
+  frames as a workaround.
+- **Spark LOD (`lod: true`) proved unreliable on desktop dev** — kept
+  off; revisit if/when targeting standalone headsets.
+- Polycam pairs: GLB is y-up, PLY point cloud is z-up → the visual
+  offset defaults to `rotationDeg: [-90, 0, 0]` (confirmed by ICP,
+  residual 2.3 cm).
 
-## Housekeeping
+## For collaborators
 
-Safe to delete (leftover scaffolding, no longer referenced): `SparkTest.js`, `SparkTest/`, `src/counter.js`, `src/assets/`.
+- Your own `world.spz` + `collider.glb` drop into `CONFIG.environment`
+  directly — spz is detected as a gaussian format and rendered by Spark.
+- Spark 0.1.x projects: see the official
+  [0.1 → 2.0 migration guide](https://sparkjs.dev/docs/0.1-2.0-migration-guide/)
+  (main requirement: three ≥ 0.180).
+- The AI-brain ↔ agent bridge belongs at app level, not in Spark:
+  chat input arrives at `ui.onSubmit` (main.js), and agent code can read
+  and drive the world through the same handles the debug console uses.
