@@ -13,9 +13,9 @@ Present but blocked:
 
 - `MGstudio_SmallRoom.spz` / `MGstudio_Area1.spz` — real gaussian splats
   (883K / 1.6M splats, SH3) but in **SPZ v4** format, which Spark 2.1.0
-  cannot decode. Down-convert to SPZ v2 or compressed PLY (Niantic SPZ
+  cannot decode? I'll work on down converting to SPZ v2 or compressed PLY (Niantic SPZ
   Converter: https://www.nianticspatial.com/spz-converter) and point
-  `CONFIG.environment.visual.url` at the result — it will render
+  `CONFIG.environment.visual.url` at the result — hopefully it will render
   through Spark automatically.
 
 Optional larger scene:
