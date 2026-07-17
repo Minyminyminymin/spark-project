@@ -8,9 +8,9 @@
  * ── For Unity people ─────────────────────────────────────────────────
  * CONFIG below is your Inspector. There is no visual scene editor here:
  *  - CONFIG.player.start = spawn Transform.position
- *  - The 컨트롤 panel adjusts the environment LIVE; "CONFIG 복사" copies
- *    the current values to paste back into this file.
- *  - Or fly somewhere in 1인칭 and press P for a spawn-point snippet.
+ *  - The Controls panel adjusts the environment LIVE; "Copy CONFIG values"
+ *    copies the current values to paste back into this file.
+ *  - Or fly somewhere in 1st person and press P for a spawn-point snippet.
  * ─────────────────────────────────────────────────────────────────────
  */
 import "./style.css";
@@ -26,12 +26,13 @@ import { createCollider, createPrimitiveColliders } from "./collision.js";
 
 const CONFIG = {
   // Everything under EnvironmentRoot: visual (PLY/SPZ) + collider (GLB)
-  // stay aligned as siblings. Tweak live in the 컨트롤 panel, copy back.
+  // stay aligned as siblings. Tweak live in the Controls panel, copy back.
   environment: {
     // Polycam exports are y-up, real-world metres, origin at scan centre.
-    // Floor sits at y = -1.41 × scale (measured), so position Y = 1.41 × scale
-    // puts the floor at world y = 0.  (scale 1.5 → 2.11)
-    position: [0, 2.11, 0],
+    // Measured floor sits at y = -1.41 × scale; y = 1.75 is the hand-tuned
+    // start height for this scene (floor formula value would be 2.11 at
+    // scale 1.5 — adjust with the Position Y slider if the scale changes).
+    position: [0, 1.75, 0],
     // ⚠ DEGREES, not radians! (previous radian field caused a 233° tilt
     // when 180 was entered as if degrees). The mesh is already level
     // (measured tilt: 0.84°) and the PLY offset below handles axis
@@ -46,6 +47,12 @@ const CONFIG = {
       //             file can't be shown as splats (parse error or all
       //             splats transparent, like Tree.spz was)
       //  "points" → skip Spark, load as THREE.Points directly
+      // ⚠ MGstudio_SmallRoom.spz / MGstudio_Area1.spz are SPZ **v4**
+      // (released 2026-05, ZSTD multi-stream) — Spark 2.1.0 cannot decode
+      // them and hangs the tab. Until Spark ships v4 support, either use
+      // the PLY point cloud below, or down-convert the spz to v2 /
+      // compressed PLY (e.g. Niantic's SPZ Converter or re-export from
+      // the capture tool with a compatibility option).
       url: "/splats/MGstudio_SmallRoom.ply",
       mode: "auto",
       pointSize: 0.012, // metres, for the Points fallback
@@ -54,8 +61,8 @@ const CONFIG = {
       // human-friendly DEGREES (converted to radians internally).
       // Polycam's PLY point cloud is Z-up while its GLB is Y-up — ICP
       // registration (2026-07-16) confirmed exactly -90° about X,
-      // zero translation, residual 2.3 cm. Fine-tune in the 정렬 section
-      // of the 컨트롤 panel.
+      // zero translation, residual 2.3 cm. Fine-tune in the Alignment
+      // section of the Controls panel.
       offset: {
         position: [0, 0, 0],
         rotationDeg: [-90, 0, 0],
@@ -162,7 +169,7 @@ function init() {
 
   function loadPointsFallback(reason) {
     if (reason) console.warn("[visual] Spark path abandoned:", reason);
-    status.visual = "point cloud 로딩…";
+    status.visual = "loading point cloud…";
     refreshStatus();
     loadPointCloud({ url: env.visual.url, pointSize: env.visual.pointSize })
       .then(({ object, count }) => {
@@ -179,37 +186,68 @@ function init() {
       });
   }
 
-  /**
-   * Read only the PLY header (first network chunk) and classify the file.
-   * Feeding a huge non-gaussian PLY to Spark can freeze/crash the tab, so
-   * we route plain point clouds straight to the Points path.
-   */
-  async function detectPlyKind(url) {
+  /** First network chunk of a file (≫ any header size). */
+  async function readFirstChunk(url) {
     try {
       const res = await fetch(url);
       const reader = res.body.getReader();
-      const { value } = await reader.read(); // first chunk ≫ header size
+      const { value } = await reader.read();
       reader.cancel();
-      const text = new TextDecoder("latin1").decode(value);
-      if (!text.startsWith("ply")) return "not-ply";
-      const end = text.indexOf("end_header");
-      const header = end > 0 ? text.slice(0, end) : text;
-      if (/property\s+\S+\s+(opacity|scale_0|rot_0|f_dc_0)/.test(header)) return "gaussian";
-      if (/element\s+face\s+[1-9]/.test(header)) return "mesh";
-      return "points";
+      return value ?? null;
     } catch {
-      return "unknown";
+      return null;
     }
+  }
+
+  /**
+   * Classify a PLY by its header. Feeding a huge non-gaussian PLY to
+   * Spark can freeze/crash the tab, so plain point clouds are routed
+   * straight to the Points path.
+   */
+  function classifyPly(bytes) {
+    const text = new TextDecoder("latin1").decode(bytes);
+    if (!text.startsWith("ply")) return "not-ply";
+    const end = text.indexOf("end_header");
+    const header = end > 0 ? text.slice(0, end) : text;
+    if (/property\s+\S+\s+(opacity|scale_0|rot_0|f_dc_0)/.test(header)) return "gaussian";
+    if (/element\s+face\s+[1-9]/.test(header)) return "mesh";
+    return "points";
   }
 
   async function startVisual() {
     if (env.visual.mode === "points") return loadPointsFallback();
+
     if (/\.ply(\?|$)/i.test(env.visual.url)) {
-      const kind = await detectPlyKind(env.visual.url);
-      if (kind === "points" || kind === "mesh") {
-        return loadPointsFallback(`PLY has no gaussian attributes (kind: ${kind})`);
+      const head = await readFirstChunk(env.visual.url);
+      if (head) {
+        const kind = classifyPly(head);
+        if (kind === "points" || kind === "mesh") {
+          return loadPointsFallback(`PLY has no gaussian attributes (kind: ${kind})`);
+        }
       }
     }
+
+    if (/\.spz(\?|$)/i.test(env.visual.url)) {
+      const head = await readFirstChunk(env.visual.url);
+      // SPZ v4 (2026-05) has a PLAINTEXT header: "NGSP" magic + uint32
+      // version. Spark 2.1.0 hangs on v4 — fail loudly instead of
+      // freezing the tab. (Legacy v1–v3 spz are fully gzip-wrapped, so
+      // their first bytes are 1f 8b, not "NGSP".)
+      if (head && head.length >= 8 &&
+          head[0] === 0x4e && head[1] === 0x47 && head[2] === 0x53 && head[3] === 0x50) {
+        const version = head[4] | (head[5] << 8) | (head[6] << 16) | (head[7] << 24);
+        if (version >= 4) {
+          status.visual = `SPZ v${version} — unsupported by Spark 2.1 (convert to v2)`;
+          refreshStatus();
+          console.error(
+            `[visual] ${env.visual.url} is SPZ v${version}; Spark 2.1.0 only ` +
+            `decodes v1–v3. Down-convert (Niantic SPZ Converter) or re-export.`
+          );
+          return;
+        }
+      }
+    }
+
     loadSparkVisual();
   }
 
@@ -342,50 +380,50 @@ function init() {
     ui.setControl("layer-mesh", visible);
   }
 
-  // --- Control panel (컨트롤 tab) ---
+  // --- Control panel (Controls tab) ---
   function applyEnv() {
     applyEnvironmentRootTransform(environmentRoot, env);
   }
   ui.buildControls([
-    { type: "section", label: "환경 (EnvironmentRoot)" },
-    { type: "slider", id: "env-x", label: "위치 X", min: -20, max: 20, step: 0.01,
+    { type: "section", label: "Environment (EnvironmentRoot)" },
+    { type: "slider", id: "env-x", label: "Pos X", min: -20, max: 20, step: 0.01,
       value: env.position[0], onChange: (v) => { env.position[0] = v; applyEnv(); } },
-    { type: "slider", id: "env-y", label: "위치 Y", min: -10, max: 10, step: 0.01,
+    { type: "slider", id: "env-y", label: "Pos Y", min: -10, max: 10, step: 0.01,
       value: env.position[1], onChange: (v) => { env.position[1] = v; applyEnv(); } },
-    { type: "slider", id: "env-z", label: "위치 Z", min: -20, max: 20, step: 0.01,
+    { type: "slider", id: "env-z", label: "Pos Z", min: -20, max: 20, step: 0.01,
       value: env.position[2], onChange: (v) => { env.position[2] = v; applyEnv(); } },
-    { type: "slider", id: "env-rotx", label: "회전 X°", min: -180, max: 180, step: 0.5,
+    { type: "slider", id: "env-rotx", label: "Rot X°", min: -180, max: 180, step: 0.5,
       value: env.rotationDeg[0], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.rotationDeg[0] = v; applyEnv(); } },
-    { type: "slider", id: "env-roty", label: "회전 Y°", min: -180, max: 180, step: 0.5,
+    { type: "slider", id: "env-roty", label: "Rot Y°", min: -180, max: 180, step: 0.5,
       value: env.rotationDeg[1], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.rotationDeg[1] = v; applyEnv(); } },
-    { type: "slider", id: "env-rotz", label: "회전 Z°", min: -180, max: 180, step: 0.5,
+    { type: "slider", id: "env-rotz", label: "Rot Z°", min: -180, max: 180, step: 0.5,
       value: env.rotationDeg[2], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.rotationDeg[2] = v; applyEnv(); } },
-    { type: "slider", id: "env-scale", label: "스케일", min: 0.1, max: 10, step: 0.05,
+    { type: "slider", id: "env-scale", label: "Scale", min: 0.1, max: 10, step: 0.05,
       value: env.scale, onChange: (v) => { env.scale = v; applyEnv(); } },
-    { type: "section", label: "정렬 — 시각화 ↔ 메시 (도 단위)" },
-    { type: "slider", id: "off-rx", label: "회전 X°", min: -180, max: 180, step: 0.5,
+    { type: "section", label: "Alignment — visual ↔ mesh (degrees)" },
+    { type: "slider", id: "off-rx", label: "Rot X°", min: -180, max: 180, step: 0.5,
       value: env.visual.offset.rotationDeg[0], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.visual.offset.rotationDeg[0] = v; applyVisualOffset(); } },
-    { type: "slider", id: "off-ry", label: "회전 Y°", min: -180, max: 180, step: 0.5,
+    { type: "slider", id: "off-ry", label: "Rot Y°", min: -180, max: 180, step: 0.5,
       value: env.visual.offset.rotationDeg[1], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.visual.offset.rotationDeg[1] = v; applyVisualOffset(); } },
-    { type: "slider", id: "off-rz", label: "회전 Z°", min: -180, max: 180, step: 0.5,
+    { type: "slider", id: "off-rz", label: "Rot Z°", min: -180, max: 180, step: 0.5,
       value: env.visual.offset.rotationDeg[2], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.visual.offset.rotationDeg[2] = v; applyVisualOffset(); } },
-    { type: "slider", id: "off-x", label: "이동 X", min: -3, max: 3, step: 0.01,
+    { type: "slider", id: "off-x", label: "Offset X", min: -3, max: 3, step: 0.01,
       value: env.visual.offset.position[0],
       onChange: (v) => { env.visual.offset.position[0] = v; applyVisualOffset(); } },
-    { type: "slider", id: "off-y", label: "이동 Y", min: -3, max: 3, step: 0.01,
+    { type: "slider", id: "off-y", label: "Offset Y", min: -3, max: 3, step: 0.01,
       value: env.visual.offset.position[1],
       onChange: (v) => { env.visual.offset.position[1] = v; applyVisualOffset(); } },
-    { type: "slider", id: "off-z", label: "이동 Z", min: -3, max: 3, step: 0.01,
+    { type: "slider", id: "off-z", label: "Offset Z", min: -3, max: 3, step: 0.01,
       value: env.visual.offset.position[2],
       onChange: (v) => { env.visual.offset.position[2] = v; applyVisualOffset(); } },
 
-    { type: "button", label: "CONFIG 좌표 복사", onClick: async () => {
+    { type: "button", label: "Copy CONFIG values", onClick: async () => {
       const o = env.visual.offset;
       const snippet =
         `// environment\n` +
@@ -399,44 +437,44 @@ function init() {
         `},`;
       try {
         await navigator.clipboard.writeText(snippet);
-        ui.addMessage("시스템", "환경 CONFIG가 클립보드에 복사됐어요.");
+        ui.addMessage("System", "Environment CONFIG copied to clipboard.");
       } catch {
         console.log("[CONFIG]\n" + snippet);
-        ui.addMessage("시스템", "클립보드 실패 — 콘솔에 출력했어요.");
+        ui.addMessage("System", "Clipboard failed — printed to console instead.");
       }
     } },
 
-    { type: "section", label: "레이어" },
-    { type: "checkbox", id: "layer-visual", label: "스캔 시각화 (N)",
+    { type: "section", label: "Layers" },
+    { type: "checkbox", id: "layer-visual", label: "Scan visual (N)",
       value: true, onChange: setVisualVisible },
-    { type: "checkbox", id: "layer-mesh", label: "콜라이더 메시 (M)",
+    { type: "checkbox", id: "layer-mesh", label: "Collider mesh (M)",
       value: env.mesh.visible, onChange: setMeshVisible },
 
-    { type: "section", label: "플레이어" },
-    { type: "slider", id: "p-walk", label: "걷기", min: 0.5, max: 10, step: 0.1,
+    { type: "section", label: "Player" },
+    { type: "slider", id: "p-walk", label: "Walk", min: 0.5, max: 10, step: 0.1,
       value: CONFIG.player.thirdPerson.walkSpeed,
       onChange: (v) => player.setTuning({ walkSpeed: v }) },
-    { type: "slider", id: "p-run", label: "달리기", min: 1, max: 20, step: 0.5,
+    { type: "slider", id: "p-run", label: "Run", min: 1, max: 20, step: 0.5,
       value: CONFIG.player.thirdPerson.runSpeed,
       onChange: (v) => player.setTuning({ runSpeed: v }) },
-    { type: "slider", id: "p-dist", label: "카메라", min: 1, max: 12, step: 0.1,
+    { type: "slider", id: "p-dist", label: "Camera", min: 1, max: 12, step: 0.1,
       value: CONFIG.player.thirdPerson.distance,
       onChange: (v) => player.setTuning({ distance: v }) },
-    { type: "slider", id: "p-fly", label: "비행(1인칭)", min: 1, max: 30, step: 0.5,
+    { type: "slider", id: "p-fly", label: "Fly (1st)", min: 1, max: 30, step: 0.5,
       value: CONFIG.player.speed,
       onChange: (v) => player.setTuning({ flySpeed: v }) },
 
-    { type: "section", label: "미니맵" },
-    { type: "slider", id: "map-extent", label: "범위 (m)", min: 5, max: 100, step: 1,
+    { type: "section", label: "Minimap" },
+    { type: "slider", id: "map-extent", label: "Extent", min: 5, max: 100, step: 1,
       value: CONFIG.minimap.extent, format: (v) => `${Math.round(v)}m`,
       onChange: (v) => minimap.setExtent(v) },
-    { type: "button", label: "경로 지우기", onClick: () => minimap.clearTrail() },
+    { type: "button", label: "Clear trail", onClick: () => minimap.clearTrail() },
   ]);
 
   // --- Chat (future agent.js hook, plan step 9) ---
   ui.onSubmit((text) => {
-    ui.addMessage("나", text);
-    ui.addMessage("시스템", "(에이전트 연결 전) 메시지를 받았어요.");
+    ui.addMessage("Me", text);
+    ui.addMessage("System", "(agent not connected yet) Message received.");
   });
 
   // --- Hotkeys ---
@@ -449,7 +487,7 @@ function init() {
       const p = player.rig.position;
       const snippet = `start: [${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}],`;
       console.log("[spawn point] paste into CONFIG.player:", snippet);
-      ui.addMessage("시스템", `스폰 좌표: ${snippet} (콘솔에도 출력됨)`);
+      ui.addMessage("System", `Spawn point: ${snippet} (also in console)`);
     }
     if (e.code === "Enter") {
       player.controls.unlock();

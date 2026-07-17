@@ -23,7 +23,7 @@ else works).
 ### Controls
 
 Click canvas = mouse look (Esc releases) · **WASD** move · **Shift** sprint ·
-**Q/E** fly down/up (1인칭) · **V** toggle first/third person ·
+**Q/E** fly down/up (first person) · **V** toggle first/third person ·
 **M** show collider mesh · **N** toggle scan visual ·
 **P** log spawn-point snippet · **Enter** chat
 
@@ -64,7 +64,7 @@ Points. Double-precision coordinates are converted to float32 (WebGL
 can't upload float64 — this silently kills the render loop otherwise).
 
 To swap in a new scene, change two urls in `CONFIG.environment` and
-align with the 정렬 sliders (all rotations are in **degrees** — radians
+align with the Alignment sliders (all rotations are in **degrees** — radians
 are banned from the config after a painful 233°-tilt incident).
 
 ## Collision (Unity Mesh Collider style)
@@ -94,6 +94,11 @@ dev log for the recipe used on `MGstudio_Area1`.
   frames as a workaround.
 - **Spark LOD (`lod: true`) proved unreliable on desktop dev** — kept
   off; revisit if/when targeting standalone headsets.
+- **SPZ v4 (released 2026-05) is NOT supported by Spark 2.1.0** — feeding
+  one hangs the tab during decode. The loader now reads the plaintext
+  v4 header and refuses with a clear HUD message instead. Down-convert
+  v4 files to v2 / compressed PLY (Niantic SPZ Converter, or a
+  compatibility option in the export tool) until Spark adds v4 support.
 - Polycam pairs: GLB is y-up, PLY point cloud is z-up → the visual
   offset defaults to `rotationDeg: [-90, 0, 0]` (confirmed by ICP,
   residual 2.3 cm).

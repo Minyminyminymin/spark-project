@@ -3,10 +3,10 @@
  *
  * Layout:
  *   - Top-left HUD: status, live position, view-mode buttons, controls help
- *   - Right sidebar: minimap (top) + tabbed panel (컨트롤 / 채팅)
+ *   - Right sidebar: minimap (top) + tabbed panel (Controls / Chat)
  *
- * The 컨트롤 tab is populated by main.js via buildControls(schema) so all
- * bindings (CONFIG ↔ scene) stay in one place. The 채팅 tab is the future
+ * The Controls tab is populated by main.js via buildControls(schema) so all
+ * bindings (CONFIG ↔ scene) stay in one place. The Chat tab is the future
  * hook for agent.js.
  */
 export function createUI({ title = "Spark WebXR Research" } = {}) {
@@ -19,13 +19,13 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
       <div class="hud-status" data-role="status">Initializing…</div>
       <div class="hud-pos" data-role="pos"></div>
       <div class="hud-view">
-        <button type="button" data-mode="first">1인칭</button>
-        <button type="button" data-mode="third">3인칭</button>
+        <button type="button" data-mode="first">1st Person</button>
+        <button type="button" data-mode="third">3rd Person</button>
       </div>
       <div class="hud-help" data-role="help">
         Click to look around · <b>Esc</b> release mouse<br>
-        <b>WASD</b> move · <b>Shift</b> sprint · <b>Q/E</b> down/up (1인칭)<br>
-        <b>V</b> view · <b>M</b> collider gizmo · <b>N</b> splat ·
+        <b>WASD</b> move · <b>Shift</b> sprint · <b>Q/E</b> down/up (1st person)<br>
+        <b>V</b> view · <b>M</b> collider mesh · <b>N</b> scan visual ·
         <b>P</b> spawn point · <b>Enter</b> chat
       </div>
     </div>`;
@@ -57,16 +57,16 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
     <div data-role="minimap-mount"></div>
     <div class="panel">
       <div class="panel-tabs">
-        <button type="button" data-tab="controls" class="active">컨트롤</button>
-        <button type="button" data-tab="chat">채팅</button>
+        <button type="button" data-tab="controls" class="active">Controls</button>
+        <button type="button" data-tab="chat">Chat</button>
       </div>
       <div class="panel-body" data-tab-panel="controls"></div>
       <div class="panel-body hidden" data-tab-panel="chat">
         <div class="chat-log" data-role="log"></div>
         <form class="chat-row" data-role="form">
           <input type="text" data-role="input"
-                 placeholder="메시지나 명령… (Enter)" autocomplete="off" />
-          <button type="submit">전송</button>
+                 placeholder="Message or command… (Enter)" autocomplete="off" />
+          <button type="submit">Send</button>
         </form>
       </div>
     </div>`;
