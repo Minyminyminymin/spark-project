@@ -1,6 +1,7 @@
 # Scan assets (not in git)
 
-Large scan files are shared separately (zip / Drive), not committed.
+Large scan files are shared separately (GDrive), not committed.
+https://drive.google.com/drive/folders/15SZo3GcoB55nDNg7uj3edgUGvZ0jVawx?usp=drive_link
 
 Active files for the current CONFIG (`src/main.js`):
 
