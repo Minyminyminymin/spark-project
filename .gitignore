@@ -1,0 +1,40 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Scan assets — too large for git; shared separately (zip / Drive).
+# Keep the SmallRoom collider GLB (4.8 MB) so a fresh clone runs.
+public/splats/*
+!public/splats/README.md
+public/models/*
+!public/models/MGstudio_SmallRoom.glb
+
+# Dead scaffolding kept on disk only (couldn't be deleted from the sandbox)
+SparkTest.js
+SparkTest/
+src/counter.js
+src/assets/
+src/xr.js
+test-spark.html
+test-spark-cdn.html
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
