@@ -32,12 +32,47 @@ body {
   max-width: 320px;
 }
 
+.hud-panel.collapsed {
+  padding-bottom: 10px;
+}
+
+.hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+
 .hud-title {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.4px;
   text-transform: uppercase;
   opacity: 0.9;
+}
+
+.hud-toggle {
+  flex-shrink: 0;
+  pointer-events: auto;
+  font: inherit;
+  line-height: 1;
+  color: #e8e8ee;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 5px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.hud-toggle:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.hud-body {
+  margin-top: 4px;
 }
 
 .hud-status {

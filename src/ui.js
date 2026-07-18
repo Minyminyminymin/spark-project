@@ -15,26 +15,49 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
   root.id = "hud";
   root.innerHTML = `
     <div class="hud-panel">
-      <div class="hud-title">${title}</div>
-      <div class="hud-status" data-role="status">Initializing…</div>
-      <div class="hud-pos" data-role="pos"></div>
-      <div class="hud-view">
-        <button type="button" data-mode="first">1st Person</button>
-        <button type="button" data-mode="third">3rd Person</button>
+      <div class="hud-header">
+        <div class="hud-title">${title}</div>
+        <button type="button" class="hud-toggle" data-role="toggle"
+                title="Collapse panel" aria-label="Collapse panel">&#x2212;</button>
       </div>
-      <div class="hud-help" data-role="help">
-        Click to look around · <b>Esc</b> release mouse<br>
-        <b>WASD</b> move · <b>Shift</b> sprint · <b>Q/E</b> down/up (1st person)<br>
-        <b>V</b> view · <b>M</b> collider mesh · <b>N</b> scan visual ·
-        <b>P</b> spawn point · <b>Enter</b> chat
+      <div class="hud-body" data-role="body">
+        <div class="hud-status" data-role="status">Initializing…</div>
+        <div class="hud-pos" data-role="pos"></div>
+        <div class="hud-view">
+          <button type="button" data-mode="first">1st Person</button>
+          <button type="button" data-mode="third">3rd Person</button>
+        </div>
+        <div class="hud-help" data-role="help">
+          Click to look around · <b>Esc</b> release mouse<br>
+          <b>WASD</b> move · <b>Shift</b> sprint · <b>Q/E</b> down/up (1st person)<br>
+          <b>V</b> view · <b>M</b> collider mesh · <b>N</b> scan visual ·
+          <b>L</b> raw PLY points · <b>P</b> spawn point · <b>Enter</b> chat
+        </div>
       </div>
     </div>`;
   document.body.appendChild(root);
 
+  const hudPanel = root.querySelector(".hud-panel");
+  const bodyEl = root.querySelector('[data-role="body"]');
+  const toggleEl = root.querySelector('[data-role="toggle"]');
   const statusEl = root.querySelector('[data-role="status"]');
   const posEl = root.querySelector('[data-role="pos"]');
   const helpEl = root.querySelector('[data-role="help"]');
   const viewButtons = [...root.querySelectorAll(".hud-view button")];
+
+  let hudCollapsed = false;
+  function setHudCollapsed(collapsed) {
+    hudCollapsed = collapsed;
+    hudPanel.classList.toggle("collapsed", collapsed);
+    bodyEl.style.display = collapsed ? "none" : "";
+    toggleEl.innerHTML = collapsed ? "&#x2b;" : "&#x2212;";
+    toggleEl.title = collapsed ? "Expand panel" : "Collapse panel";
+    toggleEl.setAttribute("aria-label", toggleEl.title);
+  }
+  toggleEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setHudCollapsed(!hudCollapsed);
+  });
 
   let viewChangeHandler = null;
   for (const btn of viewButtons) {
