@@ -1,0 +1,15 @@
+{
+  "episode": "deviation_recover",
+  "condition": "no-graph",
+  "qwen": "scripted",
+  "goal": "find the brass key",
+  "object": "brass_key",
+  "object_place": "E",
+  "start_place": "A",
+  "shortest_moves": 2,
+  "turns": 12,
+  "perception_calls": 12,
+  "plan_calls": 12,
+  "done": true,
+  "log": "/Users/aryanmaheshwari/scavenge_ai/eval/logs/deviation_recover__no-graph.jsonl"
+}

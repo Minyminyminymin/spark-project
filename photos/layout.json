@@ -1,0 +1,36 @@
+{
+  "_comment": "Six places on a 2x3 grid. Heading convention: 0=+y(N) 90=+x(E) 180=-y(S) 270=-x(W). Contains a 4-cycle A->B->C->D->A (and a larger loop A-B-C-F-E-D-A), so revisits are possible. Photo files are placeholders; drop real captures in under the same names.",
+  "start": {"place": "A", "yaw_deg": 90},
+  "places": {
+    "A": {
+      "x": 0, "y": 0,
+      "photos": {"0": "A_0.png", "90": "A_90.png", "180": "A_180.png", "270": "A_270.png"},
+      "adjacency": {"0": "D", "90": "B", "180": null, "270": null}
+    },
+    "B": {
+      "x": 1, "y": 0,
+      "photos": {"0": "B_0.png", "90": "B_90.png", "180": "B_180.png", "270": "B_270.png"},
+      "adjacency": {"0": "C", "90": null, "180": null, "270": "A"}
+    },
+    "C": {
+      "x": 1, "y": 1,
+      "photos": {"0": "C_0.png", "90": "C_90.png", "180": "C_180.png", "270": "C_270.png"},
+      "adjacency": {"0": "F", "90": null, "180": "B", "270": "D"}
+    },
+    "D": {
+      "x": 0, "y": 1,
+      "photos": {"0": "D_0.png", "90": "D_90.png", "180": "D_180.png", "270": "D_270.png"},
+      "adjacency": {"0": "E", "90": "C", "180": "A", "270": null}
+    },
+    "E": {
+      "x": 0, "y": 2,
+      "photos": {"0": "E_0.png", "90": "E_90.png", "180": "E_180.png", "270": "E_270.png"},
+      "adjacency": {"0": null, "90": "F", "180": "D", "270": null}
+    },
+    "F": {
+      "x": 1, "y": 2,
+      "photos": {"0": "F_0.png", "90": "F_90.png", "180": "F_180.png", "270": "F_270.png"},
+      "adjacency": {"0": null, "90": null, "180": "C", "270": "E"}
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "_comment": "Scripted Qwen responses for the demo/regression run of the agent in StaticPhotoWorld. 'perception' responses are returned when qwen_call receives image bytes; 'plan' responses when it is text-only (image_bytes is None). Consumed in order within each list. Scenario: hall (1 frontier, no landmarks) -> ROUTINE move -> arrive at 'wrong_room' instead of the expected 'corridor' (deviation) -> re-plan -> reach 'target_area' where the red_mug is visible -> stop/found.",
+  "goal": "find the red mug",
+  "perception": [
+    "{\"place_label\":\"hall\",\"place_description\":\"a long entry hall\",\"landmarks\":[],\"objects\":[],\"frontiers\":[{\"direction\":\"forward\",\"description\":\"open doorway straight ahead\"}],\"inferred_heading\":\"north\"}",
+    "{\"place_label\":\"wrong_room\",\"place_description\":\"an unexpected storage room\",\"landmarks\":[{\"name\":\"odd_statue\",\"description\":\"a strange plaster statue\",\"bbox_norm\":{\"x_min\":100,\"y_min\":100,\"x_max\":300,\"y_max\":600}}],\"objects\":[],\"frontiers\":[{\"direction\":\"forward\",\"description\":\"path deeper in\"},{\"direction\":\"left\",\"description\":\"a side door\"}],\"inferred_heading\":\"east\"}",
+    "{\"place_label\":\"target_area\",\"place_description\":\"a lounge with low tables\",\"landmarks\":[],\"objects\":[{\"name\":\"red_mug\",\"description\":\"a bright red mug on the near table\",\"bbox_norm\":{\"x_min\":500,\"y_min\":500,\"x_max\":560,\"y_max\":560}}],\"frontiers\":[{\"direction\":\"forward\",\"description\":\"aisle continuing on\"}],\"inferred_heading\":\"east\"}"
+  ],
+  "plan": [
+    "{\"reasoning\":\"Nothing here yet; head down the hall toward the corridor.\",\"action_queue\":[{\"type\":\"move\",\"distance\":1.0},{\"type\":\"move\",\"distance\":1.0}],\"expected_next_node\":\"corridor\",\"goal_status\":\"searching\"}",
+    "{\"reasoning\":\"This is a storage room, not the corridor I expected. Reorient toward the target area.\",\"action_queue\":[{\"type\":\"turn\",\"degrees\":90}],\"expected_next_node\":\"target_area\",\"goal_status\":\"searching\"}",
+    "{\"reasoning\":\"The red mug is visible on the table right here. Goal complete.\",\"action_queue\":[{\"type\":\"stop\",\"reason\":\"found the red mug\"}],\"expected_next_node\":\"target_area\",\"goal_status\":\"found\"}"
+  ]
+}

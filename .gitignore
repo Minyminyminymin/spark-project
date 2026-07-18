@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+.pytest_cache/
+
+# Recorded Qwen responses are cache artifacts; keep the dir, ignore contents.
+fixtures/*
+!fixtures/.gitkeep
+
+# Generated agent run logs.
+agent_log.jsonl
+*_bboxes.png
+
+# OS cruft
+.DS_Store
+
+# Real captured photos — personal & large; the placeholder PNGs suffice for tests.
+photos/*.jpeg
+photos/*.jpg
+photos/*.HEIC
+photos/*.heic
+
+# Session transcript (build log, not code).
+sample_json_first_perspective/claude_session_1.txt

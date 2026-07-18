@@ -1,0 +1,31 @@
+```json
+{
+  "place_label": "stone_courtyard",
+  "place_description": "An open flagstone courtyard ringed by low walls, with an arched exit on the far side.",
+  "landmarks": [
+    {
+      "name": "red_fountain",
+      "description": "A weathered red stone fountain in the center of the courtyard.",
+      "bbox_norm": {"x_min": 250, "y_min": 400, "x_max": 750, "y_max": 900},
+      "confidence": 0.9
+    },
+    {
+      "name": "arched_doorway",
+      "description": "A tall arched doorway leading out to the north.",
+      "bbox_norm": {"x_min": 800, "y_min": 100, "x_max": 1000, "y_max": 600}
+    }
+  ],
+  "objects": [
+    {
+      "name": "brass_key",
+      "description": "A small brass key resting on the fountain's rim.",
+      "bbox_norm": {"x_min": 500, "y_min": 500, "x_max": 560, "y_max": 540}
+    }
+  ],
+  "frontiers": [
+    {"direction": "forward", "description": "arched doorway with daylight beyond"},
+    {"direction": "left", "description": "shadowed colonnade running west"}
+  ],
+  "inferred_heading": "north, toward the arched doorway"
+}
+```

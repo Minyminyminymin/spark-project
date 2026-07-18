@@ -1,0 +1,15 @@
+{
+  "episode": "direct",
+  "condition": "full",
+  "qwen": "scripted",
+  "goal": "find the red mug",
+  "object": "red_mug",
+  "object_place": "F",
+  "start_place": "A",
+  "shortest_moves": 3,
+  "turns": 5,
+  "perception_calls": 5,
+  "plan_calls": 5,
+  "done": true,
+  "log": "/Users/aryanmaheshwari/scavenge_ai/eval/logs/direct__full.jsonl"
+}
