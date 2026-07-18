@@ -687,7 +687,21 @@ function init() {
   const capture = createCapture({
     renderer,
     camera,
+    scene,
     interval: 2,
+    // Frames are ALWAYS first-person (the avatar's eyes) — in third-person
+    // mode the scene is re-rendered from the avatar's head for the capture
+    // (body hidden), then the on-screen view is restored. In first person
+    // the main camera already is the eye, so no re-render is needed.
+    getEgoView: () => {
+      if (player.mode === "first" || !avatar) return null;
+      const a = avatar.object.position;
+      return {
+        position: [a.x, a.y + CONFIG.player.eyeHeight, a.z],
+        heading: avatar.object.rotation.y - (avatar.facingOffset ?? 0),
+        hide: [avatar.object],
+      };
+    },
     getPlayerState: () => ({
       mode: player.mode,
       playerPosition: player.rig.position.toArray().map((n) => +n.toFixed(2)),

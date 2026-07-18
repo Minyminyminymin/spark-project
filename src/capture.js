@@ -23,7 +23,14 @@ import * as THREE from "three";
 export function createCapture({
   renderer,
   camera,
+  scene = null,        // required for ego-view re-render
   getPlayerState = () => null, // () => { mode, playerPosition, avatarPosition, heading }
+  // First-person "eyes" for the AI: when this returns a view, the frame is
+  // rendered from the avatar's eye position/heading (hiding the avatar
+  // body), regardless of the on-screen third-person camera. Return null to
+  // capture the main camera as-is (e.g. already in first person).
+  // Shape: { position: [x,y,z], heading: radians, hide: [Object3D…] }
+  getEgoView = () => null,
   interval = 2,        // seconds between captures
   maxFrames = 30,      // ring buffer length
   width = 640,         // capture width in px (height keeps aspect)
@@ -54,30 +61,59 @@ export function createCapture({
     return moved || turned;
   }
 
+  // Ego camera used for first-person re-renders (fov matches the main cam).
+  const egoCam = new THREE.PerspectiveCamera(60, 1, 0.05, 1000);
+
   /** Grab one frame NOW (call only right after renderer.render). */
   function captureNow(force = false) {
     if (!force && onlyWhenMoved && !poseChanged()) return null;
 
     const src = renderer.domElement;
     if (!src.width || !src.height) return null;
+
+    // First-person view: re-render the scene from the avatar's eyes onto
+    // the same canvas, grab it, then restore the on-screen view below.
+    const ego = scene ? getEgoView() : null;
+    let captureCam = camera;
+    let hidden = [];
+    if (ego) {
+      egoCam.fov = camera.fov;
+      egoCam.aspect = src.width / src.height;
+      egoCam.updateProjectionMatrix();
+      egoCam.position.set(ego.position[0], ego.position[1], ego.position[2]);
+      egoCam.rotation.set(0, ego.heading, 0); // heading 0 = facing -Z
+      hidden = (ego.hide ?? []).filter((o) => o && o.visible);
+      for (const o of hidden) o.visible = false;
+      renderer.render(scene, egoCam);
+      captureCam = egoCam;
+    }
+
     const h = Math.max(1, Math.round((width * src.height) / src.width));
     work.width = width;
     work.height = h;
     ctx.drawImage(src, 0, 0, width, h);
 
-    camera.getWorldPosition(pos);
-    camera.getWorldQuaternion(quat);
-    lastPos.copy(pos);
-    lastQuat.copy(quat);
+    if (ego) {
+      for (const o of hidden) o.visible = true;
+      renderer.render(scene, camera); // put the real view back on screen
+    }
+
+    captureCam.getWorldPosition(pos);
+    captureCam.getWorldQuaternion(quat);
+    // Movement gating always tracks the MAIN camera (it follows the player
+    // in both modes), regardless of which camera produced the image.
+    camera.getWorldPosition(lastPos);
+    camera.getWorldQuaternion(lastQuat);
 
     const frame = {
       id: nextId++,
       timestamp: Date.now(),
+      view: ego ? "ego" : "camera", // ego = first-person from the avatar's eyes
       image: work.toDataURL("image/jpeg", 0.75),
       camera: {
         position: pos.toArray().map((n) => +n.toFixed(3)),
         quaternion: quat.toArray().map((n) => +n.toFixed(5)), // [x, y, z, w]
-        fov: camera.fov,
+        fov: captureCam.fov,
         aspect: +(src.width / src.height).toFixed(4),
       },
       player: getPlayerState(),
