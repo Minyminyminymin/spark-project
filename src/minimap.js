@@ -9,6 +9,7 @@
  * Drawn each frame:
  *   - grid (1 line / 5 m) + border
  *   - environment marker (tree: trunk dot + canopy ring)
+ *   - tagged-object markers (annotations.js, low-opacity dots + labels)
  *   - the avatar's walked path as a polyline (the "trail")
  *   - avatar arrow (position + heading)
  *   - camera dot (useful in first-person flight)
@@ -99,6 +100,24 @@ export function createMinimap({
     }
   }
 
+  function drawAnnotations(list) {
+    if (!list || list.length === 0) return;
+    ctx.font = "9px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    for (const a of list) {
+      const x = toX(a.x);
+      const y = toY(a.z);
+      ctx.fillStyle = "rgba(255, 209, 102, 0.75)";
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (a.label) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+        ctx.fillText(a.label, x, y - 5);
+      }
+    }
+  }
+
   function drawTrail() {
     if (trail.length < 4) return;
     ctx.strokeStyle = "rgba(138, 184, 240, 0.85)";
@@ -142,7 +161,8 @@ export function createMinimap({
   return {
     /**
      * Call once per frame.
-     * @param {object} s { avatarX, avatarZ, heading, camX, camZ, environment }
+     * @param {object} s { avatarX, avatarZ, heading, camX, camZ, environment,
+     *   annotations: [{x, z, label}] (world coords), optional }
      */
     update(s) {
       if (canvas.width === 0) return;
@@ -159,6 +179,7 @@ export function createMinimap({
 
       drawGrid();
       drawEnvironment(s.environment);
+      drawAnnotations(s.annotations);
       drawTrail();
       if (s.camX !== undefined) drawCamera(s.camX, s.camZ);
       if (s.avatarX !== undefined) drawAvatar(s.avatarX, s.avatarZ, s.heading ?? 0);

@@ -23,6 +23,9 @@ import { loadAvatar } from "./avatar.js";
 import { createUI } from "./ui.js";
 import { createMinimap } from "./minimap.js";
 import { createCollider, createPrimitiveColliders } from "./collision.js";
+import { createAnnotations } from "./annotations.js";
+import { createWorldState } from "./worldstate.js";
+import { createCapture } from "./capture.js";
 
 const CONFIG = {
   // Everything under EnvironmentRoot: visual (PLY/SPZ) + collider (GLB)
@@ -195,6 +198,25 @@ function init() {
       };
     }
   }
+
+  // --- Annotations: name tags on scene objects (splat-analyzer-plan.md) ---
+  // sceneName = collider GLB basename without extension (plan §1).
+  const sceneName = env.mesh.url.split("/").pop().replace(/\.[^/.]+$/, "");
+  const annotations = createAnnotations({
+    scene,
+    environmentRoot,
+    camera,
+    domElement: renderer.domElement,
+    sceneName,
+    ui,
+    // Lazily-resolved: visualObject/rawPlyObject are reassigned by the
+    // async loaders below, declared further down but already `let`-bound
+    // by the time tag mode can actually be used (this closure only runs
+    // on a later click, never during this synchronous init() body).
+    getPointCloud: () =>
+      (visualObject?.isPoints ? visualObject : rawPlyObject?.isPoints ? rawPlyObject : null),
+  });
+  annotations.load();
 
   // --- Visual layer: Spark splat, with automatic Points fallback ---
   let visualObject = null; // whichever object ended up in the scene
@@ -421,6 +443,7 @@ function init() {
         status.model = "point cloud → primitive collider";
       }
       player.setCollider(collider);
+      annotations.setCollider(collider);
       refreshStatus();
     })
     .catch((err) => {
@@ -481,6 +504,14 @@ function init() {
       rawPlyObject.visible = visible;
     }
     ui.setControl("layer-ply", visible);
+  }
+  function setTagsVisible(visible) {
+    annotations.setVisible(visible);
+    ui.setControl("layer-tags", visible);
+  }
+  function setBBoxVisible(visible) {
+    annotations.setBBoxVisible(visible);
+    ui.setControl("layer-bbox", visible);
   }
 
   // --- Control panel (Controls tab) ---
@@ -569,6 +600,55 @@ function init() {
       value: env.mesh.visible, onChange: setMeshVisible },
     { type: "checkbox", id: "layer-ply", label: "Raw PLY points (L)",
       value: false, onChange: setRawPlyVisible },
+    { type: "checkbox", id: "layer-tags", label: "Name tags (T)",
+      value: true, onChange: setTagsVisible },
+    { type: "checkbox", id: "layer-bbox", label: "Bounding boxes (B)",
+      value: false, onChange: setBBoxVisible },
+
+    { type: "section", label: "Annotations" },
+    { type: "checkbox", id: "tag-mode", label: "Tag mode",
+      value: false, onChange: (v) => {
+        if (v) player.controls.unlock(); // clicks raycast instead of locking
+        annotations.setTagMode(v);
+      } },
+    { type: "checkbox", id: "tag-hq", label: "HQ detect (flood fill)",
+      value: true,
+      onChange: (v) => annotations.setDetectQuality(v ? "high" : "low") },
+    { type: "button", label: "Export JSON", onClick: () => annotations.exportJson() },
+    { type: "button", label: "Save to disk (dev)", onClick: () => annotations.saveToDisk() },
+
+    { type: "section", label: "Camera capture (AI eyes)" },
+    { type: "checkbox", id: "cap-auto", label: "Auto capture (C)",
+      value: false, onChange: (v) => {
+        capture.setEnabled(v);
+        ui.addMessage("System", v
+          ? "Auto capture ON — a frame is stored every 2 s while the camera moves."
+          : `Auto capture OFF — ${capture.count()} frame(s) in the buffer.`);
+      } },
+    { type: "slider", id: "cap-interval", label: "Interval", min: 0.5, max: 10, step: 0.5,
+      value: 2, format: (v) => `${(+v).toFixed(1)}s`,
+      onChange: (v) => capture.setInterval(v) },
+    { type: "button", label: "Capture now", onClick: () => {
+      // Grab on the next rendered frame so the canvas is fresh.
+      requestAnimationFrame(() => {
+        const f = capture.captureNow();
+        ui.addMessage("System", f
+          ? `Captured frame #${f.id} (${capture.count()} buffered).`
+          : "Capture failed — canvas not ready.");
+      });
+    } },
+    { type: "button", label: "View captures (G)", onClick: () => {
+      ui.showCaptureGallery(capture.getFrames());
+    } },
+    { type: "button", label: "Export frames JSON", onClick: () => {
+      if (capture.count() === 0) return ui.addMessage("System", "No frames to export.");
+      capture.exportJson("MGstudio_SmallRoom");
+      ui.addMessage("System", `Exported ${capture.count()} frame(s).`);
+    } },
+    { type: "button", label: "Clear frames", onClick: () => {
+      capture.clear();
+      ui.addMessage("System", "Capture buffer cleared.");
+    } },
 
     { type: "section", label: "Player" },
     { type: "slider", id: "p-walk", label: "Walk", min: 0.5, max: 10, step: 0.1,
@@ -591,9 +671,56 @@ function init() {
     { type: "button", label: "Clear trail", onClick: () => minimap.clearTrail() },
   ]);
 
+  // --- World-state API (splat-analyzer-plan.md Phase B — the AI bridge) ---
+  const worldState = createWorldState({
+    annotations,
+    player,
+    camera,
+    getAvatar: () => avatar,
+  });
+  window.__world = worldState; // debug, per plan §3
+
+  // --- Camera capture (the "eyes" feed for the future vision AI) ---
+  // Every 2 s (while the camera actually moves) the rendered frame is
+  // stored with its full pose. The agent, once connected, consumes this
+  // via capture.onFrame(f => …) or capture.getFrames() — see capture.js.
+  const capture = createCapture({
+    renderer,
+    camera,
+    interval: 2,
+    getPlayerState: () => ({
+      mode: player.mode,
+      playerPosition: player.rig.position.toArray().map((n) => +n.toFixed(2)),
+      avatarPosition: avatar ? avatar.object.position.toArray().map((n) => +n.toFixed(2)) : null,
+      heading: avatar ? +(avatar.object.rotation.y - (avatar.facingOffset ?? 0)).toFixed(3) : 0,
+    }),
+  });
+  window.__capture = capture; // debug / future agent hookup
+
   // --- Chat (future agent.js hook, plan step 9) ---
   ui.onSubmit((text) => {
+    // Tag mode (annotations.js) hijacks the next chat submission as a
+    // label for the point just clicked — empty submit cancels it.
+    if (annotations.isAwaitingLabel()) {
+      annotations.submitLabel(text);
+      return;
+    }
+    if (!text) return;
     ui.addMessage("Me", text);
+    if (text.startsWith("/where")) {
+      const query = text.slice(6).trim();
+      const obj = query ? worldState.findObject(query) : null;
+      ui.addMessage(
+        "System",
+        obj
+          ? `${obj.label} (${obj.id}): ${obj.distanceFromPlayer.toFixed(1)}m away at ` +
+            `(${obj.position[0].toFixed(1)}, ${obj.position[1].toFixed(1)}, ${obj.position[2].toFixed(1)}).`
+          : query
+            ? `No object matching "${query}".`
+            : "Usage: /where <name>"
+      );
+      return;
+    }
     ui.addMessage("System", "(agent not connected yet) Message received.");
   });
 
@@ -604,11 +731,24 @@ function init() {
     if (e.code === "KeyM") setMeshVisible(!(model?.object.visible || colliderGizmo?.visible));
     if (e.code === "KeyN") setVisualVisible(!(visualObject?.visible ?? true));
     if (e.code === "KeyL") setRawPlyVisible(!(rawPlyObject?.visible ?? false));
+    if (e.code === "KeyT") setTagsVisible(!annotations.isVisible());
+    if (e.code === "KeyB") setBBoxVisible(!annotations.isBBoxVisible());
     if (e.code === "KeyP") {
       const p = player.rig.position;
       const snippet = `start: [${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}],`;
       console.log("[spawn point] paste into CONFIG.player:", snippet);
       ui.addMessage("System", `Spawn point: ${snippet} (also in console)`);
+    }
+    if (e.code === "KeyG") {
+      ui.showCaptureGallery(capture.getFrames());
+    }
+    if (e.code === "KeyC") {
+      const next = !capture.isEnabled();
+      capture.setEnabled(next);
+      ui.setControl("cap-auto", next);
+      ui.addMessage("System", next
+        ? "Auto capture ON — a frame is stored every 2 s while the camera moves."
+        : `Auto capture OFF — ${capture.count()} frame(s) in the buffer.`);
     }
     if (e.code === "Enter") {
       player.controls.unlock();
@@ -619,7 +759,7 @@ function init() {
 
   // Debug handle for the browser console (research convenience).
   window.__research = {
-    THREE, scene, camera, renderer, environmentRoot, player, minimap,
+    THREE, scene, camera, renderer, environmentRoot, player, minimap, annotations, worldState, capture,
     get visual() { return visualObject; },
     get rawPly() { return rawPlyObject; },
     get model() { return model; },
@@ -646,6 +786,8 @@ function init() {
     camera.getWorldPosition(camWorld);
     ui.setPosition(camWorld.x, camWorld.y, camWorld.z);
 
+    annotations.update(delta, camWorld);
+
     minimap.update({
       avatarX: avatar?.object.position.x,
       avatarZ: avatar?.object.position.z,
@@ -653,9 +795,16 @@ function init() {
       camX: camWorld.x,
       camZ: camWorld.z,
       environment: roomRect ? { x: roomRect.x, z: roomRect.z, rect: roomRect } : null,
+      annotations: annotations.isVisible()
+        ? annotations.getObjects().map((o) => ({ x: o.worldPosition.x, z: o.worldPosition.z, label: o.label }))
+        : [],
     });
 
     renderer.render(scene, camera);
+
+    // Must run AFTER render — the WebGL canvas is only readable in the
+    // same tick (preserveDrawingBuffer is false).
+    capture.afterRender(delta);
   });
 }
 

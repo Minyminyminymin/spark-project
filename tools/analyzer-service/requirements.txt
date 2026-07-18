@@ -1,0 +1,14 @@
+# tools/analyzer-service/run_local.py
+#
+# torch: install the build matching your platform/CUDA version from
+# https://pytorch.org/get-started/locally/ FIRST if the plain `torch` wheel
+# below doesn't fit your GPU — then `pip install -r requirements.txt` again,
+# pip will see it's already satisfied.
+
+numpy
+scipy
+scikit-learn
+plyfile
+pillow
+torch
+transformers

@@ -31,7 +31,8 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
           Click to look around · <b>Esc</b> release mouse<br>
           <b>WASD</b> move · <b>Shift</b> sprint · <b>Q/E</b> down/up (1st person)<br>
           <b>V</b> view · <b>M</b> collider mesh · <b>N</b> scan visual ·
-          <b>L</b> raw PLY points · <b>P</b> spawn point · <b>Enter</b> chat
+          <b>L</b> raw PLY points · <b>T</b> name tags · <b>B</b> bounding boxes ·
+          <b>C</b> auto capture · <b>P</b> spawn point · <b>Enter</b> chat
         </div>
       </div>
     </div>`;
@@ -82,6 +83,7 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
       <div class="panel-tabs">
         <button type="button" data-tab="controls" class="active">Controls</button>
         <button type="button" data-tab="chat">Chat</button>
+        <button type="button" data-tab="objects">Objects</button>
       </div>
       <div class="panel-body" data-tab-panel="controls"></div>
       <div class="panel-body hidden" data-tab-panel="chat">
@@ -91,6 +93,9 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
                  placeholder="Message or command… (Enter)" autocomplete="off" />
           <button type="submit">Send</button>
         </form>
+      </div>
+      <div class="panel-body hidden" data-tab-panel="objects">
+        <div class="obj-list" data-role="obj-list"></div>
       </div>
     </div>`;
   document.body.appendChild(sidebar);
@@ -181,15 +186,18 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
   const logEl = sidebar.querySelector('[data-role="log"]');
   const formEl = sidebar.querySelector('[data-role="form"]');
   const inputEl = sidebar.querySelector('[data-role="input"]');
+  const DEFAULT_PLACEHOLDER = inputEl.placeholder;
 
   let submitHandler = null;
   formEl.addEventListener("submit", (e) => {
     e.preventDefault();
-    const text = inputEl.value.trim();
-    if (!text) return;
+    const text = inputEl.value;
     inputEl.value = "";
     inputEl.blur(); // give WASD control back after sending
-    submitHandler?.(text);
+    // Empty submits are forwarded too (not swallowed here) — annotations.js
+    // tag mode treats an empty submit as "cancel"; onSubmit callers that
+    // don't care about that should ignore falsy text themselves.
+    submitHandler?.(text.trim());
   });
 
   function addMessage(from, text) {
@@ -201,6 +209,77 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
     logEl.scrollTop = logEl.scrollHeight;
     showTab("chat");
   }
+
+  // ---------- objects tab ----------
+  const objListEl = sidebar.querySelector('[data-role="obj-list"]');
+  let objectActionHandler = null;
+
+  /** entries: [{ id, label, distance, source }] — source "auto" gets an Accept button. */
+  function renderObjects(entries) {
+    objListEl.innerHTML = "";
+    if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "obj-empty";
+      empty.textContent = "No tagged objects yet. Enable Tag mode (Controls tab) and click the scene.";
+      objListEl.appendChild(empty);
+      return;
+    }
+    for (const it of entries) {
+      const row = document.createElement("div");
+      row.className = "obj-row";
+
+      if (it.source && it.source !== "manual") row.classList.add(`obj-row--${it.source}`);
+
+      const info = document.createElement("div");
+      info.className = "obj-info";
+      const labelRow = document.createElement("div");
+      labelRow.className = "obj-label-row";
+      const labelSpan = document.createElement("span");
+      labelSpan.className = "obj-label";
+      labelSpan.textContent = it.label;
+      labelRow.appendChild(labelSpan);
+      if (it.source && it.source !== "manual") {
+        const badge = document.createElement("span");
+        badge.className = `obj-badge obj-badge--${it.source}`;
+        badge.textContent = it.source;
+        labelRow.appendChild(badge);
+      }
+      const distSpan = document.createElement("span");
+      distSpan.className = "obj-dist";
+      distSpan.textContent = `${it.distance.toFixed(1)}m`;
+      info.append(labelRow, distSpan);
+
+      const actions = document.createElement("div");
+      actions.className = "obj-actions";
+      if (it.source === "auto") {
+        const acceptBtn = document.createElement("button");
+        acceptBtn.type = "button";
+        acceptBtn.textContent = "Accept";
+        acceptBtn.dataset.action = "accept";
+        acceptBtn.dataset.id = it.id;
+        actions.append(acceptBtn);
+      }
+      const renameBtn = document.createElement("button");
+      renameBtn.type = "button";
+      renameBtn.textContent = "Rename";
+      renameBtn.dataset.action = "rename";
+      renameBtn.dataset.id = it.id;
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.dataset.action = "delete";
+      deleteBtn.dataset.id = it.id;
+      actions.append(renameBtn, deleteBtn);
+
+      row.append(info, actions);
+      objListEl.appendChild(row);
+    }
+  }
+  objListEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    objectActionHandler?.(btn.dataset.action, btn.dataset.id);
+  });
 
   return {
     setStatus(text) {
@@ -223,9 +302,76 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
       submitHandler = fn;
     },
     addMessage,
+
+    /**
+     * Fullscreen gallery of captured frames (capture.js). Click a photo
+     * for a lightbox; Esc / Close / backdrop click dismisses.
+     */
+    showCaptureGallery(frames) {
+      const overlay = document.createElement("div");
+      overlay.className = "cap-overlay";
+      overlay.innerHTML = `
+        <div class="cap-header">
+          <span class="cap-title">Captured frames (${frames.length})</span>
+          <button type="button" class="cap-close">Close (Esc)</button>
+        </div>
+        <div class="cap-grid"></div>`;
+      const grid = overlay.querySelector(".cap-grid");
+
+      if (frames.length === 0) {
+        grid.innerHTML = `<div class="cap-empty">
+          No frames yet — enable Auto capture (C) and move around,
+          or press "Capture now".</div>`;
+      }
+      for (const f of [...frames].reverse()) {
+        const cell = document.createElement("div");
+        cell.className = "cap-cell";
+        const time = new Date(f.timestamp).toLocaleTimeString();
+        const p = f.camera.position;
+        cell.innerHTML = `
+          <img src="${f.image}" alt="frame ${f.id}">
+          <div class="cap-meta">#${f.id} · ${time} ·
+            cam (${p[0].toFixed(1)}, ${p[1].toFixed(1)}, ${p[2].toFixed(1)})</div>`;
+        cell.addEventListener("click", () => {
+          const box = document.createElement("div");
+          box.className = "cap-lightbox";
+          box.innerHTML = `<img src="${f.image}" alt="frame ${f.id}">`;
+          box.addEventListener("click", () => box.remove());
+          document.body.appendChild(box);
+        });
+        grid.appendChild(cell);
+      }
+
+      function close() {
+        window.removeEventListener("keydown", onKey, true);
+        overlay.remove();
+      }
+      function onKey(e) {
+        if (e.code === "Escape") {
+          const box = document.querySelector(".cap-lightbox");
+          if (box) box.remove();
+          else close();
+          e.stopPropagation();
+        }
+      }
+      window.addEventListener("keydown", onKey, true);
+      overlay.querySelector(".cap-close").addEventListener("click", close);
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) close();
+      });
+      document.body.appendChild(overlay);
+    },
+
     focusInput() {
       showTab("chat");
       inputEl.focus();
+    },
+    setInputPlaceholder(text) {
+      inputEl.placeholder = text ?? DEFAULT_PLACEHOLDER;
+    },
+    renderObjects,
+    onObjectAction(fn) {
+      objectActionHandler = fn;
     },
     dispose() {
       root.remove();

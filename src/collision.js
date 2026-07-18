@@ -76,6 +76,17 @@ export function createCollider(object) {
       return raycaster.intersectObjects(meshes, false)[0] ?? null;
     },
 
+    /**
+     * Raycast from the camera through a normalized-device-coordinate point
+     * (e.g. a mouse click converted to NDC) against the collider meshes.
+     * Used by annotations.js tag mode to place a tag at the clicked surface.
+     */
+    raycastFromCamera(ndc, cam) {
+      raycaster.setFromCamera(ndc, cam);
+      raycaster.far = Infinity;
+      return raycaster.intersectObjects(meshes, false)[0] ?? null;
+    },
+
     dispose() {
       for (const mesh of meshes) mesh.geometry.disposeBoundsTree();
     },

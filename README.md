@@ -24,24 +24,32 @@ else works).
 
 Click canvas = mouse look (Esc releases) · **WASD** move · **Shift** sprint ·
 **Q/E** fly down/up (first person) · **V** toggle first/third person ·
-**M** show collider mesh · **N** toggle scan visual ·
-**P** log spawn-point snippet · **Enter** chat
+**M** show collider mesh · **N** toggle scan visual · **T** toggle name tags ·
+**B** toggle bounding boxes · **P** log spawn-point snippet · **Enter** chat
 
 ## Architecture
 
 ```
 src/
-  main.js       Entry — CONFIG (the "Inspector") + module wiring + render loop
-  scene.js      Renderer, scene, camera, SparkRenderer, lights
-  splat.js      Gaussian splat loading (Spark SplatMesh)
-  models.js     GLB mesh loading + PLY point-cloud loading (loadPointCloud)
-  collision.js  BVH raycast collider (three-mesh-bvh) + primitive fallback
-  player.js     First-person fly cam + third-person character controller
-  avatar.js     GLB character + animation crossfades (Idle/Walk/Run)
-  ui.js         HUD, control panel (sliders), chat tab
-  minimap.js    Top-view canvas map with walked-path trail
+  main.js         Entry — CONFIG (the "Inspector") + module wiring + render loop
+  scene.js        Renderer, scene, camera, SparkRenderer, lights
+  splat.js        Gaussian splat loading (Spark SplatMesh)
+  models.js       GLB mesh loading + PLY point-cloud loading (loadPointCloud)
+  collision.js    BVH raycast collider (three-mesh-bvh) + primitive fallback
+  player.js       First-person fly cam + third-person character controller
+  avatar.js       GLB character + animation crossfades (Idle/Walk/Run)
+  ui.js           HUD, control panel (sliders), chat + Objects tabs
+  minimap.js      Top-view canvas map with walked-path trail + object markers
+  annotations.js  Name-tag objects in the scene: tag mode, persistence, Objects tab
+  worldstate.js   Read-only query API over annotations (`/where`, window.__world)
 
-Next: agent.js — AI agent receiving chat commands (hook: ui.onSubmit in main.js)
+tools/
+  analyzer-service/
+    run_local.py    Offline Phase-C auto-tagging CLI (see its own README.md)
+
+Next: agent.js — AI agent receiving chat commands (hook: ui.onSubmit in
+main.js), consuming worldstate.js for scene context (see
+splat-analyzer-plan.md §5 — deliberately not built yet)
 ```
 
 `main.js` creates everything and passes dependencies explicitly; modules
@@ -81,6 +89,53 @@ the collider like a Unity gizmo.
 Scan meshes with holes can be repaired headlessly (VTK
 `vtkFillHolesFilter`, same family as MeshLab's Close Holes) — see the
 dev log for the recipe used on `MGstudio_Area1`.
+
+## Object annotations
+
+`annotations.js` name-tags objects inside the scan (see
+`splat-analyzer-plan.md` for the full spec). Press **T** to toggle tags,
+enable "Tag mode" in the Controls panel, click a surface, then type a name
+in chat — empty submit cancels. Tags are stored in EnvironmentRoot-local
+coordinates (immune to Environment slider changes) in
+`public/annotations/<sceneName>.json`, where `sceneName` is the collider
+GLB's basename. Every edit also drafts to `localStorage` so it survives a
+reload; "Export JSON" downloads the file to drop into `public/annotations/`,
+and "Save to disk" does the same automatically via a `vite.config.js`
+dev-server middleware (dev mode only). The Objects tab lists every tag with
+live distance and rename/delete buttons; tags also render as low-opacity
+dots on the minimap.
+
+**Click detection quality:** a click doesn't just record a bare point. If a
+color-carrying point cloud is loaded (the raw scan PLY — position + vertex
+color; press **L** if the active visual is a Spark gaussian splat instead),
+the click seeds a small neighbourhood, buckets the surrounding sphere into
+5 cm voxels, then flood-fills 26-neighbour-connected voxels outward from
+the seed — accepting a voxel only while its color stays close to the
+region's running (adaptive) color mean, so the fill actually stops at
+object edges instead of just distance. A detected floor slab under the
+seed is excluded so tags don't bleed into the ground. The dominant color is
+picked by per-point voting on color names, not by averaging RGB (averaging
+a two-tone chair gives muddy gray; voting gives "white"). Toggle "HQ
+detect" in the Controls panel to fall back to a cheaper color-ball-radius
+heuristic if the flood fill is too slow/aggressive for a given scene.
+Typed labels get auto-specified from the detected color ("chair" → "white
+chair" if it isn't already color-specific), and the extent is stored as the
+object's `aabb`. Press **B** (or the "Bounding boxes" checkbox) to see the
+detected extents; name-tag labels sit right above the detected box instead
+of floating a fixed height above the anchor.
+
+**Offline auto-tagging (Phase C):** `tools/analyzer-service/run_local.py`
+finds objects in a PLY export via open-vocabulary text prompts (OWL-ViT)
+and writes them into the same annotations file as `source: "auto"` — see
+`tools/analyzer-service/README.md`. Auto proposals show a badge and an
+**Accept** button in the Objects tab (promotes to `verified`, recolors
+green) alongside the existing Rename/Delete, closing the review loop the
+plan's Phase C describes.
+
+`worldstate.js` is the read-only query API a future agent (plan §5, not
+built here) will consume: `window.__world.describeScene()`,
+`.findObject(name)`, `.nearest(k)`, `.listObjects()`, `.playerState()`. Try
+`/where <name>` in chat to test it end-to-end today.
 
 ## Field notes / known quirks
 
