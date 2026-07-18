@@ -1,0 +1,5 @@
+{"turn": 0, "type": "decision", "action": {"type": "move", "distance": 1.0}, "node": "room_A", "deviation": false, "goal_status": "searching", "event": null}
+{"turn": 1, "type": "decision", "action": {"type": "turn", "degrees": -90.0}, "node": "room_B", "deviation": false, "goal_status": "searching", "event": null}
+{"turn": 2, "type": "decision", "action": {"type": "move", "distance": 1.0}, "node": "room_B", "deviation": false, "goal_status": "searching", "event": null}
+{"turn": 3, "type": "decision", "action": {"type": "move", "distance": 1.0}, "node": "room_C", "deviation": false, "goal_status": "searching", "event": null}
+{"turn": 4, "type": "decision", "action": {"type": "stop", "reason": "found the red mug"}, "node": "room_F", "deviation": false, "goal_status": "found", "event": null}
