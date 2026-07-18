@@ -29,30 +29,46 @@ const CONFIG = {
   // stay aligned as siblings. Tweak live in the Controls panel, copy back.
   environment: {
     // Polycam exports are y-up, real-world metres, origin at scan centre.
-    // Measured floor sits at y = -1.41 × scale; y = 1.75 is the hand-tuned
-    // start height for this scene (floor formula value would be 2.11 at
-    // scale 1.5 — adjust with the Position Y slider if the scale changes).
-    position: [0, 1.75, 0],
+    // Position Y scales with the environment: hand-tuned 1.75 at scale 1.5
+    // → 2.33 at scale 2. Adjust with the Pos Y slider if scale changes.
+    position: [0, 2.33, 0],
     // ⚠ DEGREES, not radians! (previous radian field caused a 233° tilt
     // when 180 was entered as if degrees). The mesh is already level
     // (measured tilt: 0.84°) and the PLY offset below handles axis
     // conventions — this should normally stay [0, 0, 0].
     rotationDeg: [0, 0, 0],
-    scale: 1.5,
+    scale: 2,
     flipped: false, // adds 180° about X — for y-down gaussian PLY captures
     visual: {
-      // MGstudio_SmallRoom.ply is a Polycam POINT CLOUD (xyz+RGB, no
-      // gaussian attributes). mode:
+      // ⚠ 2026-07-17 ROOT CAUSE FOUND for "mesh and splat sizes don't
+      // match": it isn't a registration/scale bug — the gaussian splat
+      // file (SuperSplat "Cleaned" export, MGstudio_SmallRoom_Cleaned.ply)
+      // is a CROPPED subset of the room. Verified offline by comparing
+      // axis-aligned bounding-box extents (0.5-99.5 percentile, to ignore
+      // stray points) after rotating each cloud into the mesh's frame:
+      //   MGstudio_SmallRoom_Cleaned.ply vs GLB mesh → x: 61%, y: 46%,
+      //   z: 43% of the mesh's size — non-uniform, so no single Scale
+      //   value can fix it (tried; a 0.90 "fix" was a false lead from a
+      //   shallow ICP minimum and has been reverted).
+      //   MGstudio_SmallRoom.ply (the RAW, uncleaned Polycam point cloud,
+      //   1.97M pts, xyz+RGB, no gaussian attrs) vs the same mesh → x/y/z
+      //   all within 1.4% — near-perfect size match, because this is the
+      //   file the mesh was itself reconstructed from. SuperSplat's
+      //   cleanup step is what shrank the "Cleaned" export.
+      // So: using the raw point cloud here (not the Cleaned gaussian
+      // file) is the actual fix for the size mismatch, at the cost of
+      // per-vertex-color dots instead of true gaussian shading. To get
+      // gaussian splats back AND have them match the mesh, re-export
+      // from SuperSplat without cropping the room bounds.
+      // mode:
       //  "auto"   → try Spark first, fall back to three.js Points if the
       //             file can't be shown as splats (parse error or all
       //             splats transparent, like Tree.spz was)
       //  "points" → skip Spark, load as THREE.Points directly
-      // ⚠ MGstudio_SmallRoom.spz / MGstudio_Area1.spz are SPZ **v4**
-      // (released 2026-05, ZSTD multi-stream) — Spark 2.1.0 cannot decode
-      // them and hangs the tab. Until Spark ships v4 support, either use
-      // the PLY point cloud below, or down-convert the spz to v2 /
-      // compressed PLY (e.g. Niantic's SPZ Converter or re-export from
-      // the capture tool with a compatibility option).
+      // Other files here for reference:
+      //  - "/splats/MGstudio_SmallRoom_Cleaned.ply" — real gaussian splats
+      //    (883K, SH3) but cropped to ~45-60% of the room, see above.
+      //  - *.spz here are SPZ v4 — unsupported by Spark 2.1 (guarded).
       url: "/splats/MGstudio_SmallRoom.ply",
       mode: "auto",
       pointSize: 0.012, // metres, for the Points fallback
@@ -60,12 +76,15 @@ const CONFIG = {
       // Local offset of the VISUAL relative to the collider mesh, in
       // human-friendly DEGREES (converted to radians internally).
       // Polycam's PLY point cloud is Z-up while its GLB is Y-up — ICP
-      // registration (2026-07-16) confirmed exactly -90° about X,
-      // zero translation, residual 2.3 cm. Fine-tune in the Alignment
-      // section of the Controls panel.
+      // registration (2026-07-16) confirmed exactly -90° about X, zero
+      // translation, residual 2.3cm; re-confirmed 2026-07-17 (bounding
+      // box match above used this same offset). scale is a general knob
+      // for future splat files that genuinely are mis-scaled — leave at
+      // 1 for this raw point cloud, which already matches the mesh 1:1.
       offset: {
         position: [0, 0, 0],
         rotationDeg: [-90, 0, 0],
+        scale: 1,
       },
     },
     mesh: {
@@ -154,17 +173,26 @@ function init() {
   // --- Visual layer: Spark splat, with automatic Points fallback ---
   let visualObject = null; // whichever object ended up in the scene
   let sparkSplat = null;   // set only when the Spark path succeeded
+  let rawPlyObject = null; // raw PLY loaded as plain THREE.Points (debug, L key)
+  let rawPlyLoading = false;
 
   // Align the visual to the collider mesh (offset config is in degrees).
+  // Applies to whichever visual is currently active (Spark splat or the
+  // raw PLY point-cloud debug layer) plus the raw PLY layer if loaded,
+  // since both come from the same source file and share one registration.
   function applyVisualOffset() {
-    if (!visualObject) return;
     const o = env.visual.offset;
-    visualObject.position.set(...o.position);
-    visualObject.rotation.set(
-      THREE.MathUtils.degToRad(o.rotationDeg[0]),
-      THREE.MathUtils.degToRad(o.rotationDeg[1]),
-      THREE.MathUtils.degToRad(o.rotationDeg[2])
-    );
+    const s = o.scale ?? 1;
+    for (const obj of [visualObject, rawPlyObject]) {
+      if (!obj) continue;
+      obj.position.set(...o.position);
+      obj.rotation.set(
+        THREE.MathUtils.degToRad(o.rotationDeg[0]),
+        THREE.MathUtils.degToRad(o.rotationDeg[1]),
+        THREE.MathUtils.degToRad(o.rotationDeg[2])
+      );
+      obj.scale.setScalar(s);
+    }
   }
 
   function loadPointsFallback(reason) {
@@ -183,6 +211,38 @@ function init() {
         console.error("Point cloud loading failed:", err);
         status.visual = "failed (see console)";
         refreshStatus();
+      });
+  }
+
+  /**
+   * Debug layer: load the visual PLY as a plain THREE.Points cloud —
+   * bypassing Spark's gaussian rendering entirely (no opacity/SH shading,
+   * just raw xyz dots). Useful because Spark's shading can make subtle
+   * visual↔mesh misalignment hard to judge by eye; raw points give a
+   * cleaner geometric silhouette to compare against the mesh (M).
+   * Lazy: only fetched the first time it's toggled on (L key or the
+   * Layers checkbox), since the PLY here is 200MB+.
+   */
+  function loadRawPly() {
+    if (rawPlyObject || rawPlyLoading) return;
+    rawPlyLoading = true;
+    status.visual = `${status.visual} · raw PLY loading…`;
+    refreshStatus();
+    loadPointCloud({ url: env.visual.url, pointSize: env.visual.pointSize })
+      .then(({ object, count }) => {
+        environmentRoot.add(object);
+        rawPlyObject = object;
+        rawPlyLoading = false;
+        applyVisualOffset();
+        ui.setControl("layer-ply", true);
+        ui.addMessage("System", `Raw PLY loaded: ${count.toLocaleString()} points.`);
+        refreshStatus();
+      })
+      .catch((err) => {
+        console.error("Raw PLY loading failed:", err);
+        rawPlyLoading = false;
+        ui.addMessage("System", "Raw PLY load failed (see console).");
+        ui.setControl("layer-ply", false);
       });
   }
 
@@ -379,13 +439,33 @@ function init() {
     if (colliderGizmo) colliderGizmo.visible = visible;
     ui.setControl("layer-mesh", visible);
   }
+  function setRawPlyVisible(visible) {
+    // If the main visual already IS the raw point cloud (env.visual.url
+    // has no gaussian attributes, so it fell back to Points already —
+    // true by default now that visual.url points at the raw scan), don't
+    // fetch a redundant second copy of a 50MB+ file — just alias to N.
+    if (visualObject && visualObject !== sparkSplat) {
+      setVisualVisible(visible);
+      ui.setControl("layer-ply", visible);
+      return;
+    }
+    if (visible && !rawPlyObject) {
+      loadRawPly(); // async; will show once loaded
+    } else if (rawPlyObject) {
+      rawPlyObject.visible = visible;
+    }
+    ui.setControl("layer-ply", visible);
+  }
 
   // --- Control panel (Controls tab) ---
   function applyEnv() {
     applyEnvironmentRootTransform(environmentRoot, env);
   }
   ui.buildControls([
-    { type: "section", label: "Environment (EnvironmentRoot)" },
+    // Environment moves the WHOLE scene: splat visual + collider mesh move
+    // together, and collision follows automatically (raycasts read live
+    // matrixWorld). This is the section to use for placing/scaling.
+    { type: "section", label: "Environment — splat + collider together" },
     { type: "slider", id: "env-x", label: "Pos X", min: -20, max: 20, step: 0.01,
       value: env.position[0], onChange: (v) => { env.position[0] = v; applyEnv(); } },
     { type: "slider", id: "env-y", label: "Pos Y", min: -10, max: 10, step: 0.01,
@@ -403,7 +483,9 @@ function init() {
       onChange: (v) => { env.rotationDeg[2] = v; applyEnv(); } },
     { type: "slider", id: "env-scale", label: "Scale", min: 0.1, max: 10, step: 0.05,
       value: env.scale, onChange: (v) => { env.scale = v; applyEnv(); } },
-    { type: "section", label: "Alignment — visual ↔ mesh (degrees)" },
+    // Registration nudges ONLY the splat relative to the collider — use it
+    // solely to fix visual↔collision mismatch (pre-solved by ICP above).
+    { type: "section", label: "Registration — splat only (advanced)" },
     { type: "slider", id: "off-rx", label: "Rot X°", min: -180, max: 180, step: 0.5,
       value: env.visual.offset.rotationDeg[0], format: (v) => `${(+v).toFixed(1)}°`,
       onChange: (v) => { env.visual.offset.rotationDeg[0] = v; applyVisualOffset(); } },
@@ -422,6 +504,15 @@ function init() {
     { type: "slider", id: "off-z", label: "Offset Z", min: -3, max: 3, step: 0.01,
       value: env.visual.offset.position[2],
       onChange: (v) => { env.visual.offset.position[2] = v; applyVisualOffset(); } },
+    // Relative scale of the splat vs. the mesh collider. Added 2026-07-17:
+    // the "Cleaned" PLY export isn't quite 1:1 metric with the GLB — a
+    // scale sweep found a real minimum around 0.9. At this room's ~3-4m
+    // half-extent, leaving this at 1.0 alone produces 30-40cm of
+    // mismatch at the walls even when position/rotation look right near
+    // the center, which is likely why alignment still looked off.
+    { type: "slider", id: "off-scale", label: "Scale", min: 0.5, max: 1.5, step: 0.005,
+      value: env.visual.offset.scale ?? 1,
+      onChange: (v) => { env.visual.offset.scale = v; applyVisualOffset(); } },
 
     { type: "button", label: "Copy CONFIG values", onClick: async () => {
       const o = env.visual.offset;
@@ -434,6 +525,7 @@ function init() {
         `offset: {\n` +
         `  position: [${o.position.map((n) => +n.toFixed(3)).join(", ")}],\n` +
         `  rotationDeg: [${o.rotationDeg.map((n) => +n.toFixed(1)).join(", ")}],\n` +
+        `  scale: ${(+(o.scale ?? 1)).toFixed(3)},\n` +
         `},`;
       try {
         await navigator.clipboard.writeText(snippet);
@@ -449,6 +541,8 @@ function init() {
       value: true, onChange: setVisualVisible },
     { type: "checkbox", id: "layer-mesh", label: "Collider mesh (M)",
       value: env.mesh.visible, onChange: setMeshVisible },
+    { type: "checkbox", id: "layer-ply", label: "Raw PLY points (L)",
+      value: false, onChange: setRawPlyVisible },
 
     { type: "section", label: "Player" },
     { type: "slider", id: "p-walk", label: "Walk", min: 0.5, max: 10, step: 0.1,
@@ -483,6 +577,7 @@ function init() {
     if (e.code === "KeyV") ui.setViewMode(player.setMode(player.mode === "third" ? "first" : "third"));
     if (e.code === "KeyM") setMeshVisible(!(model?.object.visible || colliderGizmo?.visible));
     if (e.code === "KeyN") setVisualVisible(!(visualObject?.visible ?? true));
+    if (e.code === "KeyL") setRawPlyVisible(!(rawPlyObject?.visible ?? false));
     if (e.code === "KeyP") {
       const p = player.rig.position;
       const snippet = `start: [${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}],`;
@@ -500,6 +595,7 @@ function init() {
   window.__research = {
     THREE, scene, camera, renderer, environmentRoot, player, minimap,
     get visual() { return visualObject; },
+    get rawPly() { return rawPlyObject; },
     get model() { return model; },
     get avatar() { return avatar; },
   };
