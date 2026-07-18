@@ -73,14 +73,26 @@ const CONFIG = {
       mode: "auto",
       pointSize: 0.012, // metres, for the Points fallback
       lod: false, // Spark LOD unreliable on desktop dev (2026-07-15 finding)
-      // Local offset of the VISUAL relative to the collider mesh, in
-      // human-friendly DEGREES (converted to radians internally).
-      // Polycam's PLY point cloud is Z-up while its GLB is Y-up — ICP
-      // registration (2026-07-16) confirmed exactly -90° about X, zero
-      // translation, residual 2.3cm; re-confirmed 2026-07-17 (bounding
-      // box match above used this same offset). scale is a general knob
-      // for future splat files that genuinely are mis-scaled — leave at
-      // 1 for this raw point cloud, which already matches the mesh 1:1.
+      // Registration presets, PER FILE (solved by trimmed similarity ICP —
+      // rotation + translation + uniform scale; intrinsic-XYZ degrees).
+      // On startup the preset matching the url's filename is copied into
+      // `offset`, so switching url automatically applies the right
+      // registration. Unlisted files fall back to `offset` as-is.
+      presets: {
+        // Polycam point cloud: z-up, 1:1 scale (residual 1.5 cm)
+        "MGstudio_SmallRoom.ply": {
+          position: [0, 0, 0], rotationDeg: [-90, 0, 0], scale: 1,
+        },
+        // SuperSplat cleaned gaussian export: y-down AND 20% shrunk by the
+        // cleanup — needs scale 1.2015 (residual 4.2 cm; it's a crop, so
+        // only ~half the room is covered)
+        "MGstudio_SmallRoom_Cleaned.ply": {
+          position: [-0.223, -0.966, -0.064],
+          rotationDeg: [179.9, 1.6, -0.6],
+          scale: 1.2015,
+        },
+      },
+      // Active registration (auto-filled from presets; sliders edit this).
       offset: {
         position: [0, 0, 0],
         rotationDeg: [-90, 0, 0],
@@ -169,6 +181,20 @@ function init() {
   scene.add(environmentRoot);
 
   const env = CONFIG.environment;
+
+  // Apply the per-file registration preset for the active visual url
+  // (deep-copied so slider edits don't mutate the preset itself).
+  {
+    const base = env.visual.url.split("/").pop();
+    const preset = env.visual.presets?.[base];
+    if (preset) {
+      env.visual.offset = {
+        position: [...preset.position],
+        rotationDeg: [...preset.rotationDeg],
+        scale: preset.scale ?? 1,
+      };
+    }
+  }
 
   // --- Visual layer: Spark splat, with automatic Points fallback ---
   let visualObject = null; // whichever object ended up in the scene
