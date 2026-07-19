@@ -6,8 +6,10 @@ from app.world.base import (
     MoveAction,
     Pose,
     StopAction,
+    StrafeAction,
     TurnAction,
     View,
+    WalkToAction,
     World,
 )
 
@@ -17,6 +19,7 @@ __all__ = [
     "MoveAction",
     "Pose",
     "StopAction",
+    "StrafeAction",
     "TurnAction",
     "View",
     "World",

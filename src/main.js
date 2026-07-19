@@ -2,8 +2,8 @@
  * main.js — Entry point. Wires the modules together.
  *
  * Desktop-only build (WebXR removed 2026-07-16).
- * Environment: MGstudio_SmallRoom — PLY scan as the VISUAL layer,
- * textured GLB mesh as the Unity-style COLLIDER (press M to show it).
+ * Environment: Cozy_Indoor_Room — SPZ gaussian splat as the VISUAL layer,
+ * GLB mesh as the Unity-style COLLIDER (press M to show it).
  *
  * ── For Unity people ─────────────────────────────────────────────────
  * CONFIG below is your Inspector. There is no visual scene editor here:
@@ -44,69 +44,30 @@ const CONFIG = {
     scale: 2,
     flipped: false, // adds 180° about X — for y-down gaussian PLY captures
     visual: {
-      // ⚠ 2026-07-17 ROOT CAUSE FOUND for "mesh and splat sizes don't
-      // match": it isn't a registration/scale bug — the gaussian splat
-      // file (SuperSplat "Cleaned" export, MGstudio_SmallRoom_Cleaned.ply)
-      // is a CROPPED subset of the room. Verified offline by comparing
-      // axis-aligned bounding-box extents (0.5-99.5 percentile, to ignore
-      // stray points) after rotating each cloud into the mesh's frame:
-      //   MGstudio_SmallRoom_Cleaned.ply vs GLB mesh → x: 61%, y: 46%,
-      //   z: 43% of the mesh's size — non-uniform, so no single Scale
-      //   value can fix it (tried; a 0.90 "fix" was a false lead from a
-      //   shallow ICP minimum and has been reverted).
-      //   MGstudio_SmallRoom.ply (the RAW, uncleaned Polycam point cloud,
-      //   1.97M pts, xyz+RGB, no gaussian attrs) vs the same mesh → x/y/z
-      //   all within 1.4% — near-perfect size match, because this is the
-      //   file the mesh was itself reconstructed from. SuperSplat's
-      //   cleanup step is what shrank the "Cleaned" export.
-      // So: using the raw point cloud here (not the Cleaned gaussian
-      // file) is the actual fix for the size mismatch, at the cost of
-      // per-vertex-color dots instead of true gaussian shading. To get
-      // gaussian splats back AND have them match the mesh, re-export
-      // from SuperSplat without cropping the room bounds.
       // mode:
       //  "auto"   → try Spark first, fall back to three.js Points if the
       //             file can't be shown as splats (parse error or all
-      //             splats transparent, like Tree.spz was)
+      //             splats transparent)
       //  "points" → skip Spark, load as THREE.Points directly
-      // Other files here for reference:
-      //  - "/splats/MGstudio_SmallRoom_Cleaned.ply" — real gaussian splats
-      //    (883K, SH3) but cropped to ~45-60% of the room, see above.
-      //  - *.spz here are SPZ v4 — unsupported by Spark 2.1 (guarded).
-      url: "/splats/MGstudio_SmallRoom.ply",
+      url: "/splats/Cozy_Indoor_Room.spz",
       mode: "auto",
       pointSize: 0.012, // metres, for the Points fallback
       lod: false, // Spark LOD unreliable on desktop dev (2026-07-15 finding)
-      // Registration presets, PER FILE (solved by trimmed similarity ICP —
-      // rotation + translation + uniform scale; intrinsic-XYZ degrees).
-      // On startup the preset matching the url's filename is copied into
-      // `offset`, so switching url automatically applies the right
-      // registration. Unlisted files fall back to `offset` as-is.
       presets: {
-        // Polycam point cloud: z-up, 1:1 scale (residual 1.5 cm)
-        "MGstudio_SmallRoom.ply": {
-          position: [0, 0, 0], rotationDeg: [-90, 0, 0], scale: 1,
-        },
-        // SuperSplat cleaned gaussian export: y-down AND 20% shrunk by the
-        // cleanup — needs scale 1.2015 (residual 4.2 cm; it's a crop, so
-        // only ~half the room is covered)
-        "MGstudio_SmallRoom_Cleaned.ply": {
-          position: [-0.223, -0.966, -0.064],
-          rotationDeg: [179.9, 1.6, -0.6],
-          scale: 1.2015,
+        "Cozy_Indoor_Room.spz": {
+          position: [0, 0, 0], rotationDeg: [0, 0, 0], scale: 1,
         },
       },
       // Active registration (auto-filled from presets; sliders edit this).
       offset: {
         position: [0, 0, 0],
-        rotationDeg: [-90, 0, 0],
+        rotationDeg: [0, 0, 0],
         scale: 1,
       },
     },
     mesh: {
-      // Real triangle mesh (135K tris, textured) — the Unity Mesh Collider.
-      // Invisible by default; M shows the TEXTURED mesh for alignment checks.
-      url: "/models/MGstudio_SmallRoom.glb",
+      // Collider mesh — invisible by default; M shows it for alignment checks.
+      url: "/models/Cozy_Indoor_Room_collider.glb",
       visible: false,
     },
     // Fallback only: used when the GLB has no triangles (e.g. the old

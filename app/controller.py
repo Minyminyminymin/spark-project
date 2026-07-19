@@ -20,27 +20,49 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+import math
+
 from app.localizer import localize
 from app.memory import TopoMap
 from app.perception import perceive
 from app.planner import plan
-from app.world.base import MoveAction, TurnAction, World
+from app.world.base import MoveAction, StopAction, TurnAction, WalkToAction, World
 
 
 def _goal_visible(goal: str, observation: Any) -> bool:
-    """Return True if any perceived object/landmark matches the goal target.
+    """Return True if a perceived object matches ALL meaningful keywords in the goal.
 
-    Strips navigation verbs so 'walk to the sofa' matches 'sofa', 'couch',
-    'settee', 'loveseat' etc. via substring matching on the full description.
+    Navigation verbs are stripped. The remaining words are split into:
+      - noun keywords  (sofa, chair, table …)
+      - modifier keywords (dark, brown, red, big, small …)
+
+    An object matches only if its name+description contains the noun AND
+    every modifier. This prevents "dark brown sofa" from matching a beige sofa
+    just because the word "sofa" appears.
     """
-    STOP = {"walk", "go", "to", "the", "find", "get", "reach", "move", "a", "an"}
-    keywords = {w.lower() for w in goal.split() if w.lower() not in STOP and len(w) > 2}
-    if not keywords:
+    STOP = {"walk", "go", "to", "the", "find", "get", "reach", "move", "a", "an",
+            "towards", "toward", "near", "next", "that", "which", "with"}
+    MODIFIERS = {"dark", "light", "big", "small", "large", "red", "blue", "green",
+                 "brown", "black", "white", "grey", "gray", "yellow", "orange",
+                 "pink", "purple", "wooden", "metal", "glass", "tall", "short",
+                 "round", "square", "old", "new", "bright", "dim"}
+
+    words = [w.lower().strip(".,!?") for w in goal.split()
+             if w.lower() not in STOP and len(w) > 1]
+    if not words:
         return False
+
+    noun_kws = [w for w in words if w not in MODIFIERS]
+    mod_kws  = [w for w in words if w in MODIFIERS]
+
     items = list(getattr(observation, "objects", [])) + list(getattr(observation, "landmarks", []))
     for item in items:
         text = f"{getattr(item, 'name', '')} {getattr(item, 'description', '')}".lower()
-        if any(kw in text for kw in keywords):
+        # Noun must match (any noun keyword suffices — handles sofa/couch synonyms)
+        if not any(kw in text for kw in noun_kws):
+            continue
+        # All modifiers must match (color, size, material)
+        if all(kw in text for kw in mod_kws):
             return True
     return False
 
@@ -284,6 +306,95 @@ class Agent:
             fh.write(json.dumps(record) + "\n")
         self.log_records.append(record)
 
+    def _find_goal_object(self, observation: Any) -> Any | None:
+        """Find the observation object that matches the goal."""
+        STOP = {"walk", "go", "to", "the", "find", "get", "reach", "move", "a", "an",
+                "towards", "toward", "near", "next", "that", "which", "with"}
+        words = [w.lower().strip(".,!?") for w in self.goal.split()
+                 if w.lower() not in STOP and len(w) > 1]
+        if not words:
+            return None
+
+        items = list(getattr(observation, "objects", [])) + list(getattr(observation, "landmarks", []))
+        for item in items:
+            text = f"{getattr(item, 'name', '')} {getattr(item, 'description', '')}".lower()
+            if any(kw in text for kw in words):
+                return item
+        return None
+
+    def _compute_approach_actions(self, goal_obj: Any, observation: Any, pose: Any) -> list:
+        """Compute a walk_to action using world coordinates.
+
+        From the object's bbox center-x we get the bearing angle offset from
+        the agent's current yaw. From the bbox area we estimate distance.
+        Combine with the agent's world position to get an absolute (x, z) target.
+
+        Coordinate convention (from base.py):
+          yaw   0° → +y (north)
+          yaw  90° → +x (east)
+          yaw 180° → -y (south)
+          yaw 270° → -x (west)
+
+        agent.js maps: backend.x = three.x, backend.y = -three.z
+        So walk_to.x → three.x, walk_to.z → -backend.y (→ three.z)
+        """
+        if goal_obj is None:
+            return [MoveAction(distance=1.0)]
+
+        bbox = getattr(goal_obj, "bbox_norm", None)
+        if bbox is None:
+            return [MoveAction(distance=1.0)]
+
+        # bbox_norm is on 0-1000 scale
+        x_min = bbox.x_min
+        x_max = bbox.x_max
+        y_min = bbox.y_min
+        y_max = bbox.y_max
+
+        cx = (x_min + x_max) / 2 / 1000  # 0-1 normalized
+        box_w = (x_max - x_min) / 1000
+        box_h = (y_max - y_min) / 1000
+        area_frac = box_w * box_h
+
+        # "Very close" if EITHER the bbox area is large OR the object fills
+        # most of the frame height (handles tall/thin objects like lamps)
+        if area_frac > 0.30 or box_h > 0.75 or box_w > 0.60:
+            return [StopAction(reason="reached goal — object is very close")]
+
+        # Use the larger dimension for distance estimation (more robust for
+        # non-square objects like lamps, paintings, etc.)
+        size = max(box_w, box_h)
+
+        # Estimate distance from apparent size:
+        #   size 0.75 → ~0.5m
+        #   size 0.50 → ~1.5m
+        #   size 0.25 → ~3m
+        #   size 0.10 → ~6m
+        # Rough inverse: dist ≈ k / size
+        est_distance = min(1.0 / max(size, 0.05), 8.0)
+
+        # Walk to 90% of estimated distance — get close, re-evaluate on arrival
+        walk_distance = est_distance * 0.9
+
+        # Bearing angle from screen position:
+        # Assuming ~90° horizontal FOV, center of image = current yaw
+        # offset_angle = (cx - 0.5) * FOV
+        H_FOV_DEG = 90.0
+        angle_offset_deg = (cx - 0.5) * H_FOV_DEG
+
+        # World bearing to target
+        bearing_deg = pose.yaw_deg + angle_offset_deg
+        bearing_rad = math.radians(bearing_deg)
+
+        # Compute world target (yaw 0=+y, 90=+x convention):
+        #   dx = sin(bearing) * distance
+        #   dy = cos(bearing) * distance
+        target_x = pose.x + math.sin(bearing_rad) * walk_distance
+        target_y = pose.y + math.cos(bearing_rad) * walk_distance
+
+        # walk_to uses backend coords: x and z where z = -backend.y for Three.js
+        return [WalkToAction(x=round(target_x, 3), z=round(target_y, 3))]
+
     # ------------------------------------------------------------------ #
     # Browser-driven path (no World I/O)
     # ------------------------------------------------------------------ #
@@ -309,9 +420,12 @@ class Agent:
 
         deviated = self._detect_deviation(self.last_localized_node)
 
-        # Always re-perceive every step — the FSM inside _run_decision_from_frame
-        # handles scanning vs approaching without any blind ROUTINE moves.
-        record = self._run_decision_from_frame(turn, deviated, image_bytes, width, height, pose)
+        # If there's a queued move action from the previous plan, execute it
+        # without re-perceiving — this ensures turn+move pairs complete.
+        if self.action_queue and not deviated:
+            record = self._run_routine_no_world(turn)
+        else:
+            record = self._run_decision_from_frame(turn, deviated, image_bytes, width, height, pose)
 
         self._write_log(record)
         self.turn += 1
@@ -342,14 +456,23 @@ class Agent:
     ) -> dict:
         """DECISION turn: perception → FSM → action.
 
-        FSM logic (no planner call when goal is not visible):
+        FSM logic:
           SCANNING: goal not in frame → turn 90°.
                     After 4 turns (full 360°) with no sighting → move 1m to
                     a new position and reset the scan counter.
-          APPROACHING: goal visible → call planner with spatial hints so it
-                    can turn toward it and move. Stop when proximity is close.
+          APPROACHING: goal visible → compute world-space target from bbox +
+                    pose, emit walk_to(x, z) to go directly there. No planner.
         """
-        observation = perceive(image_bytes, width, height, self.qwen_call, goal=self.goal)  # Qwen #1
+        try:
+            observation = perceive(image_bytes, width, height, self.qwen_call, goal=self.goal)
+        except Exception:
+            # Qwen returned invalid JSON — treat this frame as a scan turn
+            action = TurnAction(degrees=SCAN_ANGLE)
+            self.action_history.append(action.model_dump())
+            self.last_goal_status = "searching"
+            return self._record(turn, DECISION, action, self.last_localized_node,
+                                deviation=deviated, goal_status="searching")
+
         localize(observation, pose, self.topo_map)
         node_id, new_landmark = self._commit(observation, pose, turn)
 
@@ -382,27 +505,31 @@ class Agent:
                                 deviation=deviated, goal_status=goal_status,
                                 observation=observation)
 
-        # ── APPROACHING: goal IS visible → call planner for precise nav ───────
+        # ── APPROACHING: goal IS visible → compute WASD path from bbox ────────
+        # No planner call. Use the object's screen position and proximity to
+        # derive forward + strafe commands, like a player using WASD keys.
         self.turns_since_goal_visible = 0
         self.consecutive_scan_turns = 0
         self._scan_direction = 1
 
-        summary = self.topo_map.summary(node_id)
-        result = plan(self.goal, observation, summary, self.action_history[-6:], self.qwen_call)
+        goal_obj = self._find_goal_object(observation)
+        actions = self._compute_approach_actions(goal_obj, observation, pose)
 
-        self.action_queue = list(result.action_queue)
-        self.expected_next_node = result.expected_next_node
+        self.action_queue = actions[1:] if len(actions) > 1 else []
+        self.expected_next_node = node_id
         self.plan_origin_node = node_id
         self.actions_since_expected = 0
-        self.last_goal_status = result.goal_status
         self.consecutive_routine_turns = 0
 
-        action = self.action_queue.pop(0)
+        action = actions[0]
+        goal_status = "found" if action.type == "stop" else "searching"
+        self.last_goal_status = goal_status
+
         self.action_history.append(action.model_dump())
         self.actions_since_expected += 1
-        if action.type == "stop" or result.goal_status == "found":
+        if action.type == "stop":
             self.done = True
 
         return self._record(turn, DECISION, action, node_id,
-                            deviation=deviated, goal_status=result.goal_status,
-                            observation=observation, plan=result)
+                            deviation=deviated, goal_status=goal_status,
+                            observation=observation)

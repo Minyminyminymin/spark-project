@@ -55,23 +55,25 @@ markdown) with EXACTLY this shape:
 }}
 
 Each action is one of:
-  {{"type": "move", "distance": 1.0}}
-  {{"type": "turn", "degrees": 90}}    // use +90 or -90
-  {{"type": "stop", "reason": str}}    // only when goal_status is "found" or "stuck"
+  {{"type": "move", "distance": 1.0}}       // walk forward
+  {{"type": "strafe", "distance": 0.5}}     // sidestep: positive=right, negative=left
+  {{"type": "turn", "degrees": 45}}         // rotate: positive=clockwise
+  {{"type": "stop", "reason": str}}         // only when goal_status is "found" or "stuck"
 
 Rules:
 - The queue must hold between 1 and 3 actions.
-- Each object and landmark now includes "screen_position" (left/center/right)
-  and "proximity" (very_close/close/medium/far) derived from its bounding box.
-- Use these to navigate precisely:
-    * If goal is on the LEFT → turn -90 first, then move
-    * If goal is on the RIGHT → turn +90 first, then move
-    * If goal is in CENTER → move forward (1-3 steps depending on proximity)
-    * If proximity is "very_close" or "close" → stop (goal_status "found")
-    * If goal is NOT visible → turn to scan a new direction, then move
-- Set goal_status "found" and queue {{"type":"stop","reason":"reached goal"}}
-  when proximity is very_close or close.
-- Set goal_status "stuck" only after exhausting all scan directions."""
+- Each object includes "screen_position" (left/center/right) and "proximity"
+  (very_close/close/medium/far) derived from its bounding box in the image.
+- Navigation logic:
+    * proximity "very_close" → STOP. Set goal_status "found".
+    * proximity "close" and screen_position "center" → move 1 step, then re-evaluate.
+    * screen_position "left" → turn -45 to correct heading toward target.
+    * screen_position "right" → turn +45 to correct heading toward target.
+    * screen_position "center" → move forward 1 step.
+    * Use SMALL turns (+45/-45) for approach corrections, NOT 90-degree turns.
+- ONLY set goal_status "found" when proximity is "very_close".
+- NEVER stop at "close", "medium", or "far" — keep approaching.
+- Set goal_status "stuck" only after the full 360° scan repeatedly finds nothing."""
 
 _CORRECTION = (
     "\n\nYour previous response was not valid JSON for this schema. Return ONLY a "
@@ -137,20 +139,22 @@ def _object_spatial(obj: dict, img_w: int, img_h: int) -> dict:
         cx = (x_min + x_max) / 2
         area_frac = (x_max - x_min) * (y_max - y_min) / (img_w * img_h)
 
-        # Horizontal position in frame
-        if cx < img_w * 0.33:
+        # Horizontal position — tight center band (middle 20%) so the planner
+        # makes corrective turns unless the object is nearly straight ahead.
+        if cx < img_w * 0.40:
             result["screen_position"] = "left"
-        elif cx > img_w * 0.67:
+        elif cx > img_w * 0.60:
             result["screen_position"] = "right"
         else:
             result["screen_position"] = "center"
 
-        # Proximity from bbox area
-        if area_frac > 0.20:
+        # Proximity from bbox area — calibrated so "very_close" means
+        # physically next to the object (bbox fills >30% of image).
+        if area_frac > 0.30:
             result["proximity"] = "very_close"
-        elif area_frac > 0.08:
+        elif area_frac > 0.12:
             result["proximity"] = "close"
-        elif area_frac > 0.02:
+        elif area_frac > 0.03:
             result["proximity"] = "medium"
         else:
             result["proximity"] = "far"

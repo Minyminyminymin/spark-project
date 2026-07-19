@@ -45,6 +45,21 @@ class MoveAction(BaseModel):
     distance: float
 
 
+class StrafeAction(BaseModel):
+    """Move sideways without turning. Positive = right, negative = left."""
+
+    type: Literal["strafe"] = "strafe"
+    distance: float
+
+
+class WalkToAction(BaseModel):
+    """Walk directly to absolute world coordinates (x, z)."""
+
+    type: Literal["walk_to"] = "walk_to"
+    x: float
+    z: float
+
+
 class TurnAction(BaseModel):
     """Rotate in place by ``degrees`` (positive = clockwise)."""
 
@@ -61,7 +76,7 @@ class StopAction(BaseModel):
 
 # Discriminated union: the "type" field selects which model to validate.
 Action = Annotated[
-    Union[MoveAction, TurnAction, StopAction],
+    Union[MoveAction, StrafeAction, WalkToAction, TurnAction, StopAction],
     Field(discriminator="type"),
 ]
 

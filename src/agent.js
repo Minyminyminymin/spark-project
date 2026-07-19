@@ -94,6 +94,29 @@ export function createAgent({ player, capture, camera, ui }) {
 
   // ── Apply action ──────────────────────────────────────────────────────────
 
+  // ── Strafe target: move sideways relative to avatar heading ──────────────
+
+  function computeStrafeTarget(distance) {
+    const ap = player.getAvatarPose();
+    if (!ap) {
+      // First-person fallback: strafe along camera right vector
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      dir.y = 0;
+      dir.normalize();
+      // right = cross(forward, up)
+      const rightVec = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+      const p = player.rig.position;
+      return { x: p.x + rightVec.x * distance, z: p.z + rightVec.z * distance };
+    }
+    // right = (cos(headingRad), 0, -sin(headingRad)) in Three.js world space
+    const { x, z, headingRad } = ap;
+    return {
+      x: x + Math.cos(headingRad) * distance,
+      z: z - Math.sin(headingRad) * distance,
+    };
+  }
+
   function applyAction(action, onDone) {
     if (!action) { onDone(); return; }
 
@@ -106,6 +129,27 @@ export function createAgent({ player, capture, camera, ui }) {
         ui.setViewMode("third");
       }
       player.walkAgentTo(target.x, target.z, () => onDone());
+
+    } else if (action.type === "strafe") {
+      const distance = action.distance ?? 1.0;
+      const target = computeStrafeTarget(distance);
+      if (player.mode !== "third") {
+        player.setMode("third");
+        ui.setViewMode("third");
+      }
+      player.walkAgentTo(target.x, target.z, () => onDone());
+
+    } else if (action.type === "walk_to") {
+      // walk_to has absolute world coords in backend convention:
+      //   action.x = backend x = Three.js x
+      //   action.z = backend y = -Three.js z
+      const threeX = action.x;
+      const threeZ = -action.z;
+      if (player.mode !== "third") {
+        player.setMode("third");
+        ui.setViewMode("third");
+      }
+      player.walkAgentTo(threeX, threeZ, () => onDone());
 
     } else if (action.type === "turn") {
       const degrees = action.degrees ?? 90;
