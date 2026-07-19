@@ -86,24 +86,7 @@ class PerceptionError(RuntimeError):
 # Prompt
 # --------------------------------------------------------------------------- #
 
-_PROMPT = """\
-You are the visual perception module of an agent exploring an environment from \
-first-person photos. Analyze the attached image and return a SINGLE JSON object \
-(no prose, no markdown) describing what you see.
-
-Report:
-- place_label: a short, stable name for where you think you are (e.g. "stone_courtyard").
-- place_description: one or two sentences describing the place.
-- landmarks: LARGE, FIXED features useful for navigation and relocalization
-  (walls, doorways, statues, staircases, big furniture). For each: name (short
-  stable identifier like "red_fountain"), description, bbox_norm, confidence (0-1).
-- objects: SMALL, findable objects that could be search targets (a mug, a book, a
-  key). Keep these SEPARATE from landmarks. For each: name, description, bbox_norm.
-- frontiers: navigable openings you could move toward, each with a direction that
-  MUST be one of "left", "forward", "right", "back", plus a description
-  (e.g. "dark corridor with arched ceiling").
-- inferred_heading: your best guess of which way you are currently facing, in
-  words (e.g. "north", "toward the tall window").
+_PROMPT_SCHEMA = """\
 
 Bounding boxes (bbox_norm) MUST be integers on a 0-1000 normalized scale for both
 axes, regardless of the image's pixel size, as {"x_min":..,"y_min":..,"x_max":..,"y_max":..}.
@@ -120,6 +103,40 @@ Return ONLY the JSON object matching this exact shape:
   "frontiers": [{"direction": "left|forward|right|back", "description": str}],
   "inferred_heading": str
 }"""
+
+
+def _goal_target(goal: str) -> str:
+    """Extract the main search noun: 'walk to the sofa' → 'sofa'"""
+    STOP = {"walk", "go", "to", "the", "find", "get", "reach", "move", "a", "an"}
+    words = [w for w in goal.lower().split() if w not in STOP and len(w) > 1]
+    return " ".join(words) if words else goal
+
+
+def _build_prompt(goal_target: str = "") -> str:
+    target_line = ""
+    if goal_target:
+        target_line = (
+            f'\nSEARCH TARGET: "{goal_target}". '
+            f'If you see it anywhere in the image, you MUST include it in "objects" '
+            f'with name exactly "{goal_target}".\n'
+        )
+    body = (
+        "You are the visual perception module of an agent exploring an environment "
+        "from first-person photos. Analyze the attached image and return a SINGLE "
+        "JSON object (no prose, no markdown) describing what you see.\n"
+        + target_line +
+        "\nReport:\n"
+        "- place_label: short stable name (e.g. \"living_room\").\n"
+        "- place_description: one or two sentences.\n"
+        "- landmarks: large fixed features (walls, doorways, big furniture). "
+        "Each: name, description, bbox_norm, confidence.\n"
+        "- objects: ANY findable object — furniture, appliances, decorations. "
+        "Each: name, description, bbox_norm.\n"
+        "- frontiers: navigable openings. Direction MUST be "
+        "\"left\"/\"forward\"/\"right\"/\"back\".\n"
+        "- inferred_heading: which way you face in words.\n"
+    )
+    return body + _PROMPT_SCHEMA
 
 _CORRECTION = (
     "\n\nYour previous response was not valid JSON for this schema. "
@@ -138,17 +155,17 @@ def perceive(
     image_width: int,
     image_height: int,
     qwen_call: Callable[..., str],
+    goal: str = "",
 ) -> Observation:
     """Perceive one photo and return a validated, pixel-annotated Observation.
 
-    ``qwen_call`` is invoked as ``qwen_call(prompt, image_bytes, json_mode=True)``.
-    On a JSON-parse or schema-validation failure the call is retried once with an
-    appended correction; a second failure raises :class:`PerceptionError`.
+    ``goal`` is used to prime Qwen to label the search target consistently.
     """
+    base_prompt = _build_prompt(_goal_target(goal))
 
     last_error: Exception | None = None
     for attempt in range(2):
-        prompt = _PROMPT if attempt == 0 else _PROMPT + _CORRECTION
+        prompt = base_prompt if attempt == 0 else base_prompt + _CORRECTION
         raw = qwen_call(prompt, image_bytes, json_mode=True)
         try:
             return _parse_and_rescale(raw, image_width, image_height)

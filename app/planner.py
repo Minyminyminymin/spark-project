@@ -61,10 +61,17 @@ Each action is one of:
 
 Rules:
 - The queue must hold between 1 and 3 actions.
-- Set goal_status to "found" and queue a single "stop" action when the goal
-  object is visible in the current observation.
-- Set goal_status to "stuck" and stop if no progress is possible.
-- Otherwise keep "searching" and move/turn toward an unexplored frontier."""
+- Each object and landmark now includes "screen_position" (left/center/right)
+  and "proximity" (very_close/close/medium/far) derived from its bounding box.
+- Use these to navigate precisely:
+    * If goal is on the LEFT → turn -90 first, then move
+    * If goal is on the RIGHT → turn +90 first, then move
+    * If goal is in CENTER → move forward (1-3 steps depending on proximity)
+    * If proximity is "very_close" or "close" → stop (goal_status "found")
+    * If goal is NOT visible → turn to scan a new direction, then move
+- Set goal_status "found" and queue {{"type":"stop","reason":"reached goal"}}
+  when proximity is very_close or close.
+- Set goal_status "stuck" only after exhausting all scan directions."""
 
 _CORRECTION = (
     "\n\nYour previous response was not valid JSON for this schema. Return ONLY a "
@@ -112,19 +119,57 @@ def _build_prompt(goal: str, observation: Any, map_summary: dict, action_history
     )
 
 
+def _object_spatial(obj: dict, img_w: int, img_h: int) -> dict:
+    """Add screen-position and proximity hints from the pixel bounding box."""
+    result = {"name": obj.get("name"), "description": obj.get("description")}
+    bbox = obj.get("bbox_px") or obj.get("bbox_norm")
+    if bbox and img_w and img_h:
+        if obj.get("bbox_px"):
+            x_min, x_max = bbox.get("x_min", 0), bbox.get("x_max", img_w)
+            y_min, y_max = bbox.get("y_min", 0), bbox.get("y_max", img_h)
+        else:
+            # bbox_norm is 0-1000 scale
+            x_min = bbox.get("x_min", 0) * img_w / 1000
+            x_max = bbox.get("x_max", img_w) * img_w / 1000
+            y_min = bbox.get("y_min", 0) * img_h / 1000
+            y_max = bbox.get("y_max", img_h) * img_h / 1000
+
+        cx = (x_min + x_max) / 2
+        area_frac = (x_max - x_min) * (y_max - y_min) / (img_w * img_h)
+
+        # Horizontal position in frame
+        if cx < img_w * 0.33:
+            result["screen_position"] = "left"
+        elif cx > img_w * 0.67:
+            result["screen_position"] = "right"
+        else:
+            result["screen_position"] = "center"
+
+        # Proximity from bbox area
+        if area_frac > 0.20:
+            result["proximity"] = "very_close"
+        elif area_frac > 0.08:
+            result["proximity"] = "close"
+        elif area_frac > 0.02:
+            result["proximity"] = "medium"
+        else:
+            result["proximity"] = "far"
+    return result
+
+
 def _observation_brief(observation: Any) -> dict:
-    """A compact, text-friendly view of the observation (drops bbox noise)."""
+    """Compact observation for the planner including spatial hints from bboxes."""
     obs = observation.model_dump() if isinstance(observation, BaseModel) else dict(observation)
+    img_w = obs.get("image_width", 640)
+    img_h = obs.get("image_height", 360)
     return {
         "place_label": obs.get("place_label"),
         "place_description": obs.get("place_description"),
         "landmarks": [
-            {"name": l.get("name"), "description": l.get("description")}
-            for l in obs.get("landmarks", [])
+            _object_spatial(l, img_w, img_h) for l in obs.get("landmarks", [])
         ],
         "objects": [
-            {"name": o.get("name"), "description": o.get("description")}
-            for o in obs.get("objects", [])
+            _object_spatial(o, img_w, img_h) for o in obs.get("objects", [])
         ],
         "frontiers": obs.get("frontiers", []),
         "inferred_heading": obs.get("inferred_heading"),

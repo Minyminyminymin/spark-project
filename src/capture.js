@@ -43,6 +43,10 @@ export function createCapture({
   let enabled = false;
   let sinceLast = Infinity; // capture immediately on enable
   let nextId = 1;
+  // One-shot capture requests from the agent loop. Each entry is a resolve()
+  // from a Promise; we fulfil them on the next afterRender() tick so the
+  // canvas is guaranteed to be populated (preserveDrawingBuffer is false).
+  const _pendingRequests = [];
 
   const work = document.createElement("canvas");
   const ctx = work.getContext("2d");
@@ -129,6 +133,13 @@ export function createCapture({
   return {
     /** Call from the render loop, AFTER renderer.render(). */
     afterRender(delta) {
+      // One-shot agent requests: always fulfil, regardless of enabled/interval.
+      // Do this first so the canvas hasn't been touched since render().
+      if (_pendingRequests.length > 0) {
+        const frame = captureNow(true); // force=true, skips pose-change gate
+        const pending = _pendingRequests.splice(0);
+        for (const resolve of pending) resolve(frame);
+      }
       if (!enabled) return;
       sinceLast += delta;
       if (sinceLast < interval) return;
@@ -146,6 +157,16 @@ export function createCapture({
     },
 
     captureNow: () => captureNow(true),
+
+    /**
+     * Return a Promise that resolves with a captured frame on the NEXT
+     * afterRender() tick. Safe to call at any time from the agent loop —
+     * the canvas is guaranteed populated because we fulfil the promise
+     * synchronously inside afterRender(), right after renderer.render().
+     */
+    requestNextFrame() {
+      return new Promise((resolve) => _pendingRequests.push(resolve));
+    },
     getFrames: () => [...frames],
     latest: () => frames[frames.length - 1] ?? null,
     count: () => frames.length,

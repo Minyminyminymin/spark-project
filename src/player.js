@@ -75,6 +75,13 @@ export function createPlayer({
   let snapBoom = false;
   const modeListeners = new Set();
 
+  // --- agent walk target ---
+  // When set, updateThird drives the avatar toward this position instead of
+  // reading keyboard input. The agent calls walkAgentTo(); the render loop
+  // fulfils it frame-by-frame; onDone() fires when the avatar arrives (or
+  // gets permanently blocked by a wall).
+  let agentTarget = null; // { x, z, onDone: fn | null }
+
   const BODY_RADIUS = 0.4;  // horizontal clearance to walls/trunks
   const CHEST_HEIGHT = 1.0; // wall ray origin height
   const MAX_STEP_UP = 0.5;  // highest ledge the avatar can walk up
@@ -121,23 +128,57 @@ export function createPlayer({
     if (!avatar) return;
     const pos = avatar.object.position;
 
-    // Move the avatar relative to where the camera looks.
-    readMoveInput(false);
-    let moving = move.lengthSq() > 0;
-    if (moving && collider) {
-      // Wall check (Unity: capsule vs collider — here a chest-height ray).
-      head.copy(pos);
-      head.y += CHEST_HEIGHT;
-      if (collider.blocked(head, move, BODY_RADIUS)) moving = false;
-    }
-    if (moving) {
-      const s = sprinting() ? tp.runSpeed : tp.walkSpeed;
-      pos.addScaledVector(move, s * delta);
-      avatar.object.rotation.y =
-        Math.atan2(move.x, move.z) + (avatar.facingOffset ?? 0);
-      avatar.setAnimation(sprinting() ? "run" : "walk");
+    if (agentTarget) {
+      // Agent-driven walk: steer avatar toward target, ignore keyboard.
+      const dx = agentTarget.x - pos.x;
+      const dz = agentTarget.z - pos.z;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist < 0.15) {
+        // Arrived.
+        avatar.setAnimation("idle");
+        const cb = agentTarget.onDone;
+        agentTarget = null;
+        cb?.();
+      } else {
+        move.set(dx / dist, 0, dz / dist);
+        let moving = true;
+        if (collider) {
+          head.copy(pos);
+          head.y += CHEST_HEIGHT;
+          if (collider.blocked(head, move, BODY_RADIUS)) moving = false;
+        }
+        if (moving) {
+          pos.addScaledVector(move, tp.walkSpeed * delta);
+          avatar.object.rotation.y =
+            Math.atan2(move.x, move.z) + (avatar.facingOffset ?? 0);
+          avatar.setAnimation("walk");
+        } else {
+          // Permanently blocked — fire callback anyway so the agent can re-plan.
+          avatar.setAnimation("idle");
+          const cb = agentTarget.onDone;
+          agentTarget = null;
+          cb?.(true); // true = blocked
+        }
+      }
     } else {
-      avatar.setAnimation("idle");
+      // Keyboard-driven movement (unchanged from original).
+      readMoveInput(false);
+      let moving = move.lengthSq() > 0;
+      if (moving && collider) {
+        head.copy(pos);
+        head.y += CHEST_HEIGHT;
+        if (collider.blocked(head, move, BODY_RADIUS)) moving = false;
+      }
+      if (moving) {
+        const s = sprinting() ? tp.runSpeed : tp.walkSpeed;
+        pos.addScaledVector(move, s * delta);
+        avatar.object.rotation.y =
+          Math.atan2(move.x, move.z) + (avatar.facingOffset ?? 0);
+        avatar.setAnimation(sprinting() ? "run" : "walk");
+      } else {
+        avatar.setAnimation("idle");
+      }
     }
 
     // Ground clamp (Unity: CharacterController grounding). Cast down from
@@ -224,6 +265,54 @@ export function createPlayer({
     },
     onModeChange(fn) {
       modeListeners.add(fn);
+    },
+
+    // ---- agent locomotion API -------------------------------------------- //
+
+    /**
+     * Walk the avatar smoothly toward (worldX, worldZ) using the existing
+     * third-person collision + animation system. `onDone(blocked)` fires when
+     * the avatar arrives within 0.15 m or gets permanently blocked.
+     * Has no effect in first-person mode (no avatar to drive).
+     */
+    walkAgentTo(worldX, worldZ, onDone) {
+      agentTarget = { x: worldX, z: worldZ, onDone: onDone ?? null };
+    },
+
+    /**
+     * Rotate the avatar in place by `degrees` (positive = clockwise).
+     * Applies instantly; the next walkAgentTo will use the new heading.
+     */
+    rotateAgent(degrees) {
+      if (!avatar) return;
+      // Positive = clockwise → decreasing rotation.y in Three.js (right-hand Y-up).
+      avatar.object.rotation.y -= degrees * (Math.PI / 180);
+    },
+
+    /**
+     * Live avatar position and facing for pose calculation.
+     * Returns null in first-person mode or before the avatar is loaded.
+     *
+     * headingRad = avatar.rotation.y − facingOffset
+     *   → 0 when facing +Z (south in Three.js)
+     *   → π when facing −Z (north in Three.js)
+     * Backend yaw convention: (180 − headingRad × 180/π + 360) % 360
+     *   maps Three.js north (headingRad=π) → backend 0° (north) ✓
+     */
+    getAvatarPose() {
+      if (!avatar) return null;
+      const pos = avatar.object.position;
+      return {
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        headingRad: avatar.object.rotation.y - (avatar.facingOffset ?? 0),
+      };
+    },
+
+    /** Cancel any in-progress agent walk target without firing onDone. */
+    clearAgentTarget() {
+      agentTarget = null;
     },
   };
 }

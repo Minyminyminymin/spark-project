@@ -12,16 +12,29 @@ not change any agent, memory, or perception logic.
 
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
+
+# Load .env from the project root so QWEN_* vars are available without
+# having to export them manually before starting uvicorn.
+_env_file = Path(__file__).parent.parent / ".env"  # project root
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
 from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.controller import Agent
 from app.memory import TopoMap
 from app.qwen_client import call_qwen
+from app.world.base import Pose, World
 from app.world.static_photos import StaticPhotoWorld
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -84,6 +97,13 @@ except Exception:
 
 
 app = FastAPI(title="ScavengeAI")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -169,3 +189,125 @@ def post_reset() -> dict:
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     return {"ok": True, "world": os.environ.get("WORLD", "static")}
+
+
+# --------------------------------------------------------------------------- #
+# Browser-driven agent path — POST /agent/step
+#
+# The renderer POSTs its own rendered frame + true pose here instead of the
+# old World.get_current_view() pull model. The World abstraction is not used
+# on this path; a stub is supplied only to satisfy the Agent constructor.
+# --------------------------------------------------------------------------- #
+
+
+class _StubWorld(World):
+    """Placeholder world for the browser-driven path; never called."""
+
+    def get_current_view(self):  # pragma: no cover
+        raise NotImplementedError("live agent: world not used on this path")
+
+    def execute_action(self, action):  # pragma: no cover
+        raise NotImplementedError("live agent: world not used on this path")
+
+
+LIVE_LOG_PATH = ROOT / "agent_log_live.jsonl"
+
+
+class _LiveState:
+    def __init__(self) -> None:
+        self.agent: Optional[Agent] = None
+
+    def reset(self) -> None:
+        self.agent = Agent(_StubWorld(), TopoMap(), DEFAULT_GOAL, _qwen_call, LIVE_LOG_PATH)
+
+    def require_agent(self) -> Agent:
+        if self.agent is None:
+            self.reset()
+        return self.agent
+
+
+live_state = _LiveState()
+live_state.reset()
+
+
+class _PosePayload(BaseModel):
+    x: float
+    y: float
+    z: float = 0.0
+    yaw_deg: float = 0.0
+
+
+class AgentStepRequest(BaseModel):
+    image_base64: str
+    image_width: int
+    image_height: int
+    pose: _PosePayload
+    goal: Optional[str] = None
+
+
+class AgentStepResponse(BaseModel):
+    action: dict
+    turn_type: str
+    deviation: bool
+    goal_status: str
+
+
+@app.post("/agent/step", response_model=AgentStepResponse)
+def post_agent_step(body: AgentStepRequest) -> AgentStepResponse:
+    """Single browser-driven agent turn.
+
+    The browser sends the rendered frame (base64 JPEG/PNG, no data: prefix)
+    plus the true pose read from the Three.js scene graph. Returns the next
+    action for the renderer to apply directly to player.rig.
+    """
+    agent = live_state.require_agent()
+
+    # Optional inline goal override for this request.
+    if body.goal is not None:
+        # New goal after a completed run → reset so the agent starts fresh.
+        if agent.done:
+            live_state.reset()
+            agent = live_state.require_agent()
+        agent.goal = body.goal
+
+    # No active goal → idle, do not burn a Qwen call.
+    if not agent.goal:
+        return AgentStepResponse(
+            action={"type": "stop", "reason": "no goal set"},
+            turn_type="idle",
+            deviation=False,
+            goal_status="idle",
+        )
+
+    try:
+        image_bytes = base64.b64decode(body.image_base64)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid base64: {exc}") from exc
+
+    pose = Pose(x=body.pose.x, y=body.pose.y, z=body.pose.z, yaw_deg=body.pose.yaw_deg)
+    record = agent.step_from_frame(image_bytes, body.image_width, body.image_height, pose)
+
+    if record is None:
+        # Agent was already done before this tick (done flag set by prior turn).
+        # This path is now only hit if the agent finished mid-session without a
+        # new goal being supplied. Return stop so the browser loop halts cleanly.
+        return AgentStepResponse(
+            action={"type": "stop", "reason": agent.last_goal_status or "done"},
+            turn_type="idle",
+            deviation=False,
+            goal_status=agent.last_goal_status or "done",
+        )
+
+    return AgentStepResponse(
+        action=record["action"],
+        turn_type=record["type"],
+        deviation=bool(record.get("deviation", False)),
+        goal_status=record.get("goal_status", "searching"),
+    )
+
+
+@app.post("/agent/reset")
+def post_agent_reset() -> dict:
+    """Fresh live agent (clears topo-map and turn counter)."""
+    live_state.reset()
+    return {"ok": True}

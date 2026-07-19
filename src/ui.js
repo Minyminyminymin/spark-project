@@ -27,12 +27,14 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
           <button type="button" data-mode="first">1st Person</button>
           <button type="button" data-mode="third">3rd Person</button>
         </div>
+        <div class="hud-agent hidden" data-role="agent"></div>
         <div class="hud-help" data-role="help">
           Click to look around · <b>Esc</b> release mouse<br>
           <b>WASD</b> move · <b>Shift</b> sprint · <b>Q/E</b> down/up (1st person)<br>
           <b>V</b> view · <b>M</b> collider mesh · <b>N</b> scan visual ·
           <b>L</b> raw PLY points · <b>T</b> name tags · <b>B</b> bounding boxes ·
-          <b>C</b> auto capture · <b>P</b> spawn point · <b>Enter</b> chat
+          <b>C</b> auto capture · <b>P</b> spawn point · <b>Enter</b> chat<br>
+          <b>A</b> agent start/stop · <b>/agent &lt;goal&gt;</b> set goal &amp; start · <b>/agent</b> toggle
         </div>
       </div>
     </div>`;
@@ -43,6 +45,7 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
   const toggleEl = root.querySelector('[data-role="toggle"]');
   const statusEl = root.querySelector('[data-role="status"]');
   const posEl = root.querySelector('[data-role="pos"]');
+  const agentEl = root.querySelector('[data-role="agent"]');
   const helpEl = root.querySelector('[data-role="help"]');
   const viewButtons = [...root.querySelectorAll(".hud-view button")];
 
@@ -284,6 +287,32 @@ export function createUI({ title = "Spark WebXR Research" } = {}) {
   return {
     setStatus(text) {
       statusEl.textContent = text;
+    },
+
+    /**
+     * Update the agent status readout in the HUD.
+     * { running, action, goalStatus, deviation }
+     */
+    setAgentStatus({ running, action, goalStatus, deviation } = {}) {
+      if (!running && !action) {
+        agentEl.classList.add("hidden");
+        return;
+      }
+      agentEl.classList.remove("hidden");
+      const stateLabel = running ? "▶ AGENT" : "■ AGENT";
+      const actionStr = action
+        ? action.type === "move"
+          ? `move ${action.distance ?? ""}m`
+          : action.type === "turn"
+          ? `turn ${action.degrees ?? ""}°`
+          : `stop (${action.reason ?? goalStatus})`
+        : "—";
+      const deviationBadge = deviation
+        ? ' <span class="agent-deviation">⚠ deviation</span>'
+        : "";
+      agentEl.innerHTML =
+        `<span class="agent-state ${running ? "agent-running" : "agent-stopped"}">${stateLabel}</span>` +
+        ` · ${goalStatus} · ${actionStr}${deviationBadge}`;
     },
     setPosition(x, y, z) {
       posEl.textContent = `pos [${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}]`;

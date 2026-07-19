@@ -26,6 +26,7 @@ import { createCollider, createPrimitiveColliders } from "./collision.js";
 import { createAnnotations } from "./annotations.js";
 import { createWorldState } from "./worldstate.js";
 import { createCapture } from "./capture.js";
+import { createAgent } from "./agent.js";
 
 const CONFIG = {
   // Everything under EnvironmentRoot: visual (PLY/SPZ) + collider (GLB)
@@ -650,6 +651,25 @@ function init() {
       ui.addMessage("System", "Capture buffer cleared.");
     } },
 
+    { type: "section", label: "Agent (AI navigation)" },
+    { type: "button", label: "Start agent", onClick: () => {
+      if (agent.isRunning()) {
+        ui.addMessage("System", "Agent already running. Press A or type /agent stop first.");
+      } else {
+        agent.start();
+        ui.addMessage("System", "Agent started. Set a goal with /agent <goal> in chat.");
+      }
+    } },
+    { type: "button", label: "Stop agent", onClick: () => agent.stop() },
+    { type: "button", label: "Reset agent memory", onClick: async () => {
+      try {
+        const res = await fetch("http://localhost:8000/agent/reset", { method: "POST" });
+        ui.addMessage("System", res.ok ? "Agent memory cleared." : `Reset failed: ${res.status}`);
+      } catch (err) {
+        ui.addMessage("System", `Reset failed: ${err.message}`);
+      }
+    } },
+
     { type: "section", label: "Player" },
     { type: "slider", id: "p-walk", label: "Walk", min: 0.5, max: 10, step: 0.1,
       value: CONFIG.player.thirdPerson.walkSpeed,
@@ -698,7 +718,7 @@ function init() {
       const a = avatar.object.position;
       return {
         position: [a.x, a.y + CONFIG.player.eyeHeight, a.z],
-        heading: avatar.object.rotation.y - (avatar.facingOffset ?? 0),
+        heading: avatar.object.rotation.y,
         hide: [avatar.object],
       };
     },
@@ -711,7 +731,11 @@ function init() {
   });
   window.__capture = capture; // debug / future agent hookup
 
-  // --- Chat (future agent.js hook, plan step 9) ---
+  // --- Agent (browser-driven AI loop) ---
+  const agent = createAgent({ player, capture, camera, ui });
+  window.__agent = agent; // debug handle
+
+  // --- Chat ---
   ui.onSubmit((text) => {
     // Tag mode (annotations.js) hijacks the next chat submission as a
     // label for the point just clicked — empty submit cancels it.
@@ -721,6 +745,7 @@ function init() {
     }
     if (!text) return;
     ui.addMessage("Me", text);
+
     if (text.startsWith("/where")) {
       const query = text.slice(6).trim();
       const obj = query ? worldState.findObject(query) : null;
@@ -735,7 +760,29 @@ function init() {
       );
       return;
     }
-    ui.addMessage("System", "(agent not connected yet) Message received.");
+
+    // /agent            — start with the backend's current goal (or set one first)
+    // /agent <goal>     — start with this goal
+    // /agent stop       — stop the loop
+    if (text.startsWith("/agent")) {
+      const arg = text.slice(6).trim();
+      if (arg === "stop") {
+        agent.stop();
+      } else if (arg) {
+        agent.start(arg);
+      } else {
+        // No arg: start/stop toggle
+        if (agent.isRunning()) {
+          agent.stop();
+        } else {
+          agent.start(); // uses backend's last active goal
+        }
+      }
+      return;
+    }
+
+    ui.addMessage("System",
+      "Unknown command. Try: /agent &lt;goal&gt; · /agent stop · /where &lt;object&gt;");
   });
 
   // --- Hotkeys ---
@@ -764,6 +811,14 @@ function init() {
         ? "Auto capture ON — a frame is stored every 2 s while the camera moves."
         : `Auto capture OFF — ${capture.count()} frame(s) in the buffer.`);
     }
+    if (e.code === "KeyA" && !e.ctrlKey && !e.metaKey) {
+      if (agent.isRunning()) {
+        agent.stop();
+      } else {
+        // Start with no explicit goal — reuses the last one set via /agent <goal>.
+        agent.start();
+      }
+    }
     if (e.code === "Enter") {
       player.controls.unlock();
       ui.focusInput();
@@ -773,7 +828,7 @@ function init() {
 
   // Debug handle for the browser console (research convenience).
   window.__research = {
-    THREE, scene, camera, renderer, environmentRoot, player, minimap, annotations, worldState, capture,
+    THREE, scene, camera, renderer, environmentRoot, player, minimap, annotations, worldState, capture, agent,
     get visual() { return visualObject; },
     get rawPly() { return rawPlyObject; },
     get model() { return model; },
